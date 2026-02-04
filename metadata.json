@@ -1,0 +1,5 @@
+{
+  "name": "The Lexical Glutton",
+  "description": "An experimental canvas-based creature made entirely of consumed letters that grows and evolves as it eats words.",
+  "requestFramePermissions": []
+}

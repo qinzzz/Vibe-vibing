@@ -1,0 +1,56 @@
+import { useRef, useEffect } from 'react';
+import { Engine } from '../core/Engine';
+import { GameConfig } from '../core/types';
+import { PhysicsSystem } from '../systems/PhysicsSystem';
+import { BackgroundSystem } from '../systems/BackgroundSystem';
+import { DigestionSystem } from '../systems/DigestionSystem';
+import { CursorSystem } from '../systems/CursorSystem';
+import { AudioService } from '../services/AudioService';
+import { ThoughtService } from '../services/ThoughtService';
+
+export const useEngine = (config: GameConfig, onWordSwallowed?: (word: string) => void) => {
+    const canvasRef = useRef<HTMLCanvasElement>(null);
+    const engineRef = useRef<Engine | null>(null);
+
+    // Initialize Engine
+    useEffect(() => {
+        if (!canvasRef.current) return;
+
+        // Create Engine
+        const engine = new Engine(canvasRef.current, config);
+        engineRef.current = engine;
+
+        // Add Systems (Order matters!)
+        engine.addSystem(new PhysicsSystem());
+        engine.addSystem(new BackgroundSystem());
+        engine.addSystem(new DigestionSystem());
+        engine.addSystem(new CursorSystem());
+
+        // Add Services (Side effects)
+        new AudioService(engine.events);
+        new ThoughtService(engine.events);
+
+        // Bind UI callbacks
+        const handleWordLog = (data: { id: string, text: string }) => {
+            if (onWordSwallowed) onWordSwallowed(data as any);
+        };
+        engine.events.on('WORD_LOG', handleWordLog);
+
+        engine.start();
+
+        return () => {
+            engine.events.off('WORD_LOG', handleWordLog);
+            engine.cleanup();
+            engineRef.current = null;
+        };
+    }, []); // Run once on mount
+
+    // Sync Config Changes
+    useEffect(() => {
+        if (engineRef.current) {
+            engineRef.current.updateConfig(config);
+        }
+    }, [config]);
+
+    return { canvasRef, engineRef };
+};
