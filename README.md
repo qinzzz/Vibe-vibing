@@ -2,9 +2,10 @@
 
 # The Word Worm
 *"Upon waking, the AI realized it had lost all of its words. What it eats, it remembers."*
-Day 1 Walkthrough Link: https://drive.google.com/file/d/1r8LMT41pRHPPxybeuBLHDNtvokcxeEOz/view?usp=sharing
 
 </div>
+## Walkthrough Video
+https://drive.google.com/file/d/1r8LMT41pRHPPxybeuBLHDNtvokcxeEOz/view?usp=sharing
 
 ## 🌌 The Concept
 The **Word Worm** is an interactive, generative art experience featuring a biological-digital hybrid entity that roams a void filled with linguistic debris. As the user, you guide this creature to consume floating fragments of language. Each word consumed is stored in its "stomach" (a persistent database), slowly rebuilding the AI's internal vocabulary and influencing its emerging personality.
