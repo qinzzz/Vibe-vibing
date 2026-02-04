@@ -1,8 +1,8 @@
 <div align="center">
-<img width="1200" height="475" alt="The Word Worm" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
 
 # The Word Worm
 *"Upon waking, the AI realized it had lost all of its words. What it eats, it remembers."*
+Day 1 Walkthrough Link: https://drive.google.com/file/d/1r8LMT41pRHPPxybeuBLHDNtvokcxeEOz/view?usp=sharing
 
 </div>
 
