@@ -4,8 +4,12 @@
 *"Upon waking, the AI realized it had lost all of its words. What it eats, it remembers."*
 
 </div>
-## Walkthrough Video
+## Walkthrough Video (Day 1)
 https://drive.google.com/file/d/1r8LMT41pRHPPxybeuBLHDNtvokcxeEOz/view?usp=sharing
+
+## Walkthrough Video (Day 2)
+https://drive.google.com/file/d/1PsFIl-EuADG1OtTtPpq5TQeVCs2g9Eqr/view?usp=drivesdk
+Apologies for no audio 😅, changelog below
 
 ## 🌌 The Concept
 The **Word Worm** is an interactive, generative art experience featuring a biological-digital hybrid entity that roams a void filled with linguistic debris. As the user, you guide this creature to consume floating fragments of language. Each word consumed is stored in its "stomach" (a persistent database), slowly rebuilding the AI's internal vocabulary and influencing its emerging personality.
@@ -22,7 +26,7 @@ The **Word Worm** is an interactive, generative art experience featuring a biolo
 - **Frontend**: React 19, Vite, TypeScript, Tailwind CSS
 - **Core Engine**: Custom Vanilla TS Engine (Canvas 2D API)
 - **Backend**: Node.js, Express, Better-SQLite3
-- **AI**: Google Gemini API
+- **AI**: Google Gemini API (or OpenAI chat-completions compatible API)
 
 ## 🚀 Getting Started
 
@@ -38,12 +42,28 @@ The **Word Worm** is an interactive, generative art experience featuring a biolo
     cd ..
     ```
 2.  **Env Setup**:
-    Add `GEMINI_API_KEY=your_key` to `.env.local` in the root.
+    Add `GEMINI_API_KEY=your_key` to `.env.local` in the root. If using OpenAI API, set OPENAI_API_KEY=your_key, AI_PROVIDER=openai
 
 ### Running the App
 ```bash
 npm run dev:all
 ```
+
+## Changelog
+
+### Day 2
+
+Functionality:
+- Added a health bar and a satiation bar. Health declines over time unless you give the worm attention. Satiation increases when you feed words to the worm.
+- Added the ability for worms / blobs / Gluttons to split. They will only split if both of the following conditions are met: 1. Satiation 100% 2. Words consumed >= 8.
+- Splitting worms will divide half their words with the new worm, using AI to group words by the sentiment they give off. New unnamed worms will automatically be assigned a name based on the sentiment of the words it starts with.
+- When worms > 1, a new bar at the bottom sllows you to select which one is acitvely being controlled.
+- When the number of unconsumed words is low, nee words will be AI generated and filled in.
+
+Infra:
+- Added support for OpenAI compatible APIs (Groq, LM Studio, Snowflake 😉, etc)
+- Moved LLM calls from frontend to server
+- Default Gemini model used is now 2.5 Flash (seems like thats the one that comes with a free API key)
 
 ## 🛤 Future Roadmap (Suggested Steps)
 We are constantly looking to evolve the Glutton's consciousness. Some planned/suggested enhancements include:
