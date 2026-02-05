@@ -5,6 +5,7 @@ import { PhysicsSystem } from '../systems/PhysicsSystem';
 import { BackgroundSystem } from '../systems/BackgroundSystem';
 import { DigestionSystem } from '../systems/DigestionSystem';
 import { CursorSystem } from '../systems/CursorSystem';
+import { WormLifecycleSystem } from '../systems/WormLifecycleSystem';
 import { AudioService } from '../services/AudioService';
 import { ThoughtService } from '../services/ThoughtService';
 
@@ -24,6 +25,7 @@ export const useEngine = (config: GameConfig, onWordSwallowed?: (word: string) =
         engine.addSystem(new PhysicsSystem());
         engine.addSystem(new BackgroundSystem());
         engine.addSystem(new DigestionSystem());
+        engine.addSystem(new WormLifecycleSystem());
         engine.addSystem(new CursorSystem());
 
         // Add Services (Side effects)

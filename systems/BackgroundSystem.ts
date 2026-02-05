@@ -8,6 +8,9 @@ import { EVENTS } from '../core/events';
 export class BackgroundSystem implements System {
     private engine!: Engine;
     private blocks: TextBlock[] = [];
+    private isRegenerating = false;
+    private lastWordCount = 0;
+    private readonly MIN_WORD_THRESHOLD = 30; // Regenerate when below this many words
 
     init(engine: Engine) {
         this.engine = engine;
@@ -15,7 +18,17 @@ export class BackgroundSystem implements System {
 
         // Listen for input
         this.engine.events.on('INPUT_START', this.handleInput);
+
+        // Listen for word releases (when worm dies)
+        this.engine.events.on(EVENTS.WORD_RELEASED, this.handleWordReleased);
     }
+
+    private handleWordReleased = (data: { text: string, pos: { x: number, y: number } }) => {
+        // Add released word as a new text block
+        const ctx = this.engine.ctx;
+        const block = tokenizeAndLayout(data.text, data.pos.x, data.pos.y, ctx);
+        this.blocks.push(block);
+    };
 
     private initBackgroundText() {
         this.blocks = [];
@@ -114,6 +127,91 @@ export class BackgroundSystem implements System {
                 this.pendingToken = null;
             }
         }
+
+        // Check word count and regenerate if needed
+        this.checkAndRegenerateWords();
+    }
+
+    private checkAndRegenerateWords() {
+        // Count available (not eaten) words
+        let wordCount = 0;
+        for (const block of this.blocks) {
+            for (const token of block.tokens) {
+                if (token.state === 'present') {
+                    wordCount++;
+                }
+            }
+        }
+
+        // Only regenerate if below threshold and not already regenerating
+        if (wordCount < this.MIN_WORD_THRESHOLD && !this.isRegenerating && wordCount !== this.lastWordCount) {
+            console.log(`[BACKGROUND] Low word count (${wordCount}), regenerating...`);
+            this.lastWordCount = wordCount;
+            this.regenerateWords();
+        } else {
+            this.lastWordCount = wordCount;
+        }
+    }
+
+    private async regenerateWords() {
+        this.isRegenerating = true;
+
+        try {
+            // Clean up fully-eaten blocks first
+            this.blocks = this.blocks.filter(block => {
+                // Keep block if it has at least one present token
+                return block.tokens.some(token => token.state === 'present');
+            });
+
+            console.log(`[BACKGROUND] Cleaned blocks, ${this.blocks.length} remaining`);
+
+            const response = await fetch('/api/generate-paragraphs', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ count: 3 })
+            });
+
+            const data = await response.json();
+            const paragraphs = data.paragraphs || [];
+
+            console.log(`[BACKGROUND] Generated ${paragraphs.length} new paragraphs`);
+
+            // Add new paragraphs to the world
+            const margin = 100;
+            const attempts = 50;
+            const ctx = this.engine.ctx;
+
+            for (const text of paragraphs) {
+                let placed = false;
+
+                for (let j = 0; j < attempts; j++) {
+                    const x = margin + Math.random() * (this.engine.width - LAYOUT_CONSTANTS.BLOCK_WIDTH - margin * 2);
+                    const y = margin + Math.random() * (this.engine.height - 300 - margin * 2);
+                    const testBlock = tokenizeAndLayout(text, x, y, ctx);
+
+                    const overlap = this.blocks.some(b =>
+                        x < b.x + b.width + 50 &&
+                        x + testBlock.width > b.x - 50 &&
+                        y < b.y + b.height + 50 &&
+                        y + testBlock.height > b.y - 50
+                    );
+
+                    if (!overlap) {
+                        this.blocks.push(testBlock);
+                        placed = true;
+                        break;
+                    }
+                }
+
+                if (!placed) {
+                    console.log('[BACKGROUND] ⚠️  Could not place paragraph (no space)');
+                }
+            }
+        } catch (err) {
+            console.error('[BACKGROUND] Failed to regenerate words:', err);
+        } finally {
+            this.isRegenerating = false;
+        }
     }
 
     draw(ctx: CanvasRenderingContext2D) {
@@ -139,5 +237,6 @@ export class BackgroundSystem implements System {
 
     cleanup() {
         this.engine.events.off('INPUT_START', this.handleInput);
+        this.engine.events.off(EVENTS.WORD_RELEASED, this.handleWordReleased);
     }
 }

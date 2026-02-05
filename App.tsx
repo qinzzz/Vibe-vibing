@@ -6,6 +6,7 @@ import { Toggle } from './components/ui/Toggle';
 import { ControlGroup } from './components/ui/ControlGroup';
 import { Engine } from './core/Engine';
 import { EVENTS } from './core/events';
+import type { Worm } from './types';
 
 const App: React.FC = () => {
   const [params, setParams] = useState({
@@ -29,21 +30,10 @@ const App: React.FC = () => {
   const [isRightOpen, setIsRightOpen] = useState(false);
   const [isLeftOpen, setIsLeftOpen] = useState(false);
   const [swallowedWords, setSwallowedWords] = useState<{ id: string, text: string }[]>([]);
+  const [worms, setWorms] = useState<Worm[]>([]);
+  const [activeWormId, setActiveWormId] = useState<string>('worm-0');
+  const [isReproducing, setIsReproducing] = useState(false);
   const engineRef = useRef<Engine | null>(null);
-
-  // Initial Hydration
-  useEffect(() => {
-    const hydrate = async () => {
-      try {
-        const res = await fetch('/api/stomach');
-        const data = await res.json();
-        if (data.words) setSwallowedWords(data.words);
-      } catch (e) {
-        console.error("Panel hydration failed", e);
-      }
-    };
-    hydrate();
-  }, []);
 
   const handleWordSwallowed = useCallback((data: { id: string, text: string }) => {
     setSwallowedWords(prev => [data, ...prev]);
@@ -51,7 +41,53 @@ const App: React.FC = () => {
 
   const handleEngineInit = useCallback((engine: Engine) => {
     engineRef.current = engine;
+
+    // Listen for worm lifecycle events
+    engine.events.on(EVENTS.WORM_BORN, updateWormList);
+    engine.events.on(EVENTS.WORM_DIED, updateWormList);
+
+    // Listen for hydration complete to sync UI with restored worms
+    engine.events.on(EVENTS.WORMS_HYDRATED, () => {
+      updateWormList();
+      // Update swallowed words for active worm after hydration
+      if (engineRef.current) {
+        const activeWorm = engineRef.current.activeWorm;
+        setSwallowedWords(activeWorm.swallowedWords.map(w => ({ id: w.id, text: w.text })));
+      }
+    });
+
+    // Listen for reproduction events to freeze UI
+    engine.events.on(EVENTS.REPRODUCTION_START, () => setIsReproducing(true));
+    engine.events.on(EVENTS.REPRODUCTION_COMPLETE, () => {
+      setIsReproducing(false);
+      updateWormList(); // Update worm list to show new names
+
+      // Update swallowed words for active worm after split
+      if (engineRef.current) {
+        const activeWorm = engineRef.current.activeWorm;
+        setSwallowedWords(activeWorm.swallowedWords.map(w => ({ id: w.id, text: w.text })));
+      }
+    });
   }, []);
+
+  const updateWormList = () => {
+    if (!engineRef.current) return;
+    const wormArray = Array.from(engineRef.current.wormState.worms.values());
+    setWorms(wormArray);
+    setActiveWormId(engineRef.current.wormState.activeWormId);
+  };
+
+  const switchWorm = (wormId: string) => {
+    if (!engineRef.current) return;
+    engineRef.current.wormState.activeWormId = wormId;
+    setActiveWormId(wormId);
+
+    // Update swallowed words for the new active worm
+    const worm = engineRef.current.wormState.worms.get(wormId);
+    if (worm) {
+      setSwallowedWords(worm.swallowedWords.map(w => ({ id: w.id, text: w.text })));
+    }
+  };
 
   const handleDeleteWord = async (id: string) => {
     try {
@@ -95,6 +131,63 @@ const App: React.FC = () => {
         onWordSwallowed={handleWordSwallowed}
         onEngineInit={handleEngineInit}
       />
+
+      {/* Worm Selector UI - Moved to Bottom */}
+      {worms.length > 1 && (
+        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-30 flex gap-2 pointer-events-auto">
+          <div className="bg-black/80 backdrop-blur-md px-3 py-2 rounded-lg border border-white/10">
+            <div className="text-white/50 text-[10px] uppercase tracking-widest mb-2">
+              Worms ({worms.length})
+            </div>
+            <div className="flex gap-2">
+              {worms.map(worm => {
+                const isActive = worm.id === activeWormId;
+                return (
+                  <button
+                    key={worm.id}
+                    onClick={() => switchWorm(worm.id)}
+                    className={`px-3 py-2 rounded-md transition-all duration-200 ${
+                      isActive
+                        ? 'bg-white/20 border-2'
+                        : 'bg-black/60 border border-white/10 hover:bg-white/10'
+                    }`}
+                    style={{
+                      borderColor: isActive ? `hsl(${worm.hue}, 50%, 50%)` : undefined,
+                    }}
+                  >
+                    <div className="flex items-center gap-2">
+                      <div
+                        className="w-3 h-3 rounded-full"
+                        style={{ backgroundColor: `hsl(${worm.hue}, 50%, 50%)` }}
+                      />
+                      <span className="text-white/80 text-xs font-mono">
+                        {worm.name || `Gen ${worm.generation}`}
+                      </span>
+                      <span className="text-white/60 text-[10px]">
+                        {worm.vocabulary.size}w
+                      </span>
+                    </div>
+                    <div className="mt-1 flex gap-1">
+                      <div className="w-12 h-1 bg-black/40 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-yellow-500"
+                          style={{ width: `${worm.satiation}%` }}
+                        />
+                      </div>
+                      <div className="w-12 h-1 bg-black/40 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-red-500"
+                          style={{ width: `${worm.health}%` }}
+                        />
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className={`absolute top-0 left-0 h-full z-20 transition-transform duration-300 ease-in-out ${isLeftOpen ? 'translate-x-0' : '-translate-x-[260px]'}`}>
         <button
@@ -235,11 +328,21 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 pointer-events-none text-center">
-        <div className="bg-black/60 backdrop-blur-md px-6 py-3 rounded-full border border-white/10 text-white/50 text-[10px] tracking-widest uppercase">
-          Click a word to feed it
+      {/* Reproduction Freeze Overlay */}
+      {isReproducing && (
+        <div className="absolute inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center pointer-events-auto">
+          <div className="text-center">
+            <div className="text-white text-xl font-mono-custom mb-4 animate-pulse">
+              splitting...
+            </div>
+            <div className="flex gap-2 justify-center">
+              <div className="w-3 h-3 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0s' }}></div>
+              <div className="w-3 h-3 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+              <div className="w-3 h-3 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.4s' }}></div>
+            </div>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };

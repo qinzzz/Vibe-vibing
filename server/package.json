@@ -11,7 +11,8 @@
         "better-sqlite3": "^11.10.0",
         "cors": "^2.8.6",
         "dotenv": "^16.6.1",
-        "express": "^4.22.1"
+        "express": "^4.22.1",
+        "openai": "^6.17.0"
     },
     "devDependencies": {
         "@types/better-sqlite3": "^7.6.13",

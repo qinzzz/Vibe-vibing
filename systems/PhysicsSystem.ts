@@ -1,9 +1,10 @@
-import { System } from '../core/types';
+import { System, Worm } from '../core/types';
 import { Engine } from '../core/Engine';
 import { BLOB_CONSTANTS, COLORS } from '../constants';
 import { solveIK, lerp } from '../utils/physics';
 import { computeField } from '../utils/marchingSquares';
 import { Vector2D, Leg } from '../core/types';
+import { EVENTS } from '../core/events';
 
 export class PhysicsSystem implements System {
     private engine!: Engine;
@@ -13,17 +14,23 @@ export class PhysicsSystem implements System {
     init(engine: Engine) {
         this.engine = engine;
 
-        // Initialize Core and Legs
-        const startX = engine.width / 2;
-        const startY = engine.height / 2;
+        // Initialize legs for initial worm
+        const worm = this.engine.activeWorm;
+        this.initializeWormLegs(worm);
 
-        this.engine.blobState.corePos = { x: startX, y: startY };
-        this.engine.targetPos = { x: startX, y: startY };
+        // Listen for new worms being born
+        this.engine.events.on(EVENTS.WORM_BORN, this.handleWormBorn);
+    }
 
+    private handleWormBorn = (worm: Worm) => {
+        this.initializeWormLegs(worm);
+    };
+
+    private initializeWormLegs(worm: Worm) {
         const labels = ['FL', 'FR', 'BL', 'BR'];
-        this.engine.blobState.legs = BLOB_CONSTANTS.HIP_OFFSETS.map((offset, i) => {
-            const footX = startX + offset.x * 2.5;
-            const footY = startY + offset.y * 2.5;
+        worm.legs = BLOB_CONSTANTS.HIP_OFFSETS.map((offset, i) => {
+            const footX = worm.corePos.x + offset.x * 2.5;
+            const footY = worm.corePos.y + offset.y * 2.5;
             return {
                 id: labels[i],
                 hipOffset: offset,
@@ -84,64 +91,135 @@ export class PhysicsSystem implements System {
 
     draw(ctx: CanvasRenderingContext2D) {
         const s = this.engine.config;
-        const core = this.engine.blobState.corePos;
-        const legs = this.engine.blobState.legs;
+
+        // Draw all worms
+        this.engine.wormState.worms.forEach(worm => {
+            this.drawWorm(ctx, worm, s);
+        });
+    }
+
+    private drawWorm(ctx: CanvasRenderingContext2D, worm: Worm, s: any) {
+        const core = worm.corePos;
+        const legs = worm.legs;
+
+        // Calculate worm-specific color
+        const hue = worm.hue;
+        const outlineColor = `hsla(${hue}, 50%, 50%, 0.25)`;
+        const skeletonColor = `hsla(${hue}, 50%, 60%, 0.15)`;
+
+        // Apply size multiplier
+        const coreRadius = s.coreRadius * worm.sizeMultiplier;
+        const hipRadius = s.hipRadius * worm.sizeMultiplier;
+        const kneeRadius = s.kneeRadius * worm.sizeMultiplier;
+        const footRadius = s.footRadius * worm.sizeMultiplier;
 
         // Draw Skeleton
         if (s.showSkeleton) {
-            ctx.strokeStyle = COLORS.BONE_LINE; ctx.lineWidth = 1;
+            ctx.strokeStyle = skeletonColor;
+            ctx.lineWidth = 1;
             legs.forEach(leg => {
                 const h = { x: core.x + leg.hipOffset.x, y: core.y + leg.hipOffset.y };
-                ctx.beginPath(); ctx.moveTo(h.x, h.y); ctx.lineTo(leg.kneePos.x, leg.kneePos.y); ctx.lineTo(leg.footPos.x, leg.footPos.y); ctx.stroke();
-                ctx.fillStyle = 'rgba(255,255,255,0.2)';[h, leg.kneePos, leg.footPos].forEach(p => { ctx.beginPath(); ctx.arc(p.x, p.y, 1.5, 0, Math.PI * 2); ctx.fill(); });
+                ctx.beginPath();
+                ctx.moveTo(h.x, h.y);
+                ctx.lineTo(leg.kneePos.x, leg.kneePos.y);
+                ctx.lineTo(leg.footPos.x, leg.footPos.y);
+                ctx.stroke();
+                ctx.fillStyle = `hsla(${hue}, 50%, 70%, 0.2)`;
+                [h, leg.kneePos, leg.footPos].forEach(p => {
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, 1.5, 0, Math.PI * 2);
+                    ctx.fill();
+                });
             });
-            ctx.beginPath(); ctx.arc(core.x, core.y, BLOB_CONSTANTS.FACE_ZONE_RADIUS, 0, Math.PI * 2); ctx.setLineDash([5, 10]); ctx.strokeStyle = COLORS.FACE_ZONE; ctx.stroke(); ctx.setLineDash([]);
+            ctx.beginPath();
+            ctx.arc(core.x, core.y, BLOB_CONSTANTS.FACE_ZONE_RADIUS, 0, Math.PI * 2);
+            ctx.setLineDash([5, 10]);
+            ctx.strokeStyle = `hsla(${hue}, 50%, 60%, 0.1)`;
+            ctx.stroke();
+            ctx.setLineDash([]);
         }
 
         // Draw Metaballs
         const metaballPoints: { pos: Vector2D, r: number, w: number }[] = [];
-        metaballPoints.push({ pos: core, r: s.coreRadius, w: s.coreWeight });
+        metaballPoints.push({ pos: core, r: coreRadius, w: s.coreWeight });
         legs.forEach(l => {
             const hip = { x: core.x + l.hipOffset.x, y: core.y + l.hipOffset.y };
-            metaballPoints.push({ pos: hip, r: s.hipRadius, w: s.hipWeight });
-            metaballPoints.push({ pos: l.kneePos, r: s.kneeRadius, w: s.kneeWeight });
-            let fr = s.footRadius; if (l.isStepping) fr *= (1 - Math.sin(l.stepProgress * Math.PI) * 0.25);
+            metaballPoints.push({ pos: hip, r: hipRadius, w: s.hipWeight });
+            metaballPoints.push({ pos: l.kneePos, r: kneeRadius, w: s.kneeWeight });
+            let fr = footRadius;
+            if (l.isStepping) fr *= (1 - Math.sin(l.stepProgress * Math.PI) * 0.25);
             metaballPoints.push({ pos: l.footPos, r: fr, w: s.footWeight });
         });
 
         // Marching Squares Rendering
-        // Bounds
         let minX = core.x, minY = core.y, maxX = core.x, maxY = core.y;
-        metaballPoints.forEach(p => { minX = Math.min(minX, p.pos.x - p.r); minY = Math.min(minY, p.pos.y - p.r); maxX = Math.max(maxX, p.pos.x + p.r); maxY = Math.max(maxY, p.pos.y + p.r); });
+        metaballPoints.forEach(p => {
+            minX = Math.min(minX, p.pos.x - p.r);
+            minY = Math.min(minY, p.pos.y - p.r);
+            maxX = Math.max(maxX, p.pos.x + p.r);
+            maxY = Math.max(maxY, p.pos.y + p.r);
+        });
 
         const cellSize = s.cellSize, iso = s.isoThreshold, padding = BLOB_CONSTANTS.METABALL.ROI_PADDING;
-        const gridMinX = Math.floor((minX - padding) / cellSize) * cellSize, gridMinY = Math.floor((minY - padding) / cellSize) * cellSize;
+        const gridMinX = Math.floor((minX - padding) / cellSize) * cellSize;
+        const gridMinY = Math.floor((minY - padding) / cellSize) * cellSize;
         const cols = Math.floor((Math.ceil((maxX + padding) / cellSize) * cellSize - gridMinX) / cellSize);
         const rows = Math.floor((Math.ceil((maxY + padding) / cellSize) * cellSize - gridMinY) / cellSize);
 
         if (cols > 0 && rows > 0) {
             const gridValues: number[][] = [];
-            for (let i = 0; i <= cols; i++) { gridValues[i] = []; for (let j = 0; j <= rows; j++) gridValues[i][j] = computeField(gridMinX + i * cellSize, gridMinY + j * cellSize, metaballPoints); }
-            ctx.beginPath(); ctx.strokeStyle = COLORS.OUTLINE; ctx.lineWidth = 1.5;
+            for (let i = 0; i <= cols; i++) {
+                gridValues[i] = [];
+                for (let j = 0; j <= rows; j++) {
+                    gridValues[i][j] = computeField(gridMinX + i * cellSize, gridMinY + j * cellSize, metaballPoints);
+                }
+            }
+            ctx.beginPath();
+            ctx.strokeStyle = outlineColor;
+            ctx.lineWidth = 1.5;
 
             for (let i = 0; i < cols; i++) {
                 for (let j = 0; j < rows; j++) {
                     const x = gridMinX + i * cellSize, y = gridMinY + j * cellSize;
-                    const v0 = gridValues[i][j], v1 = gridValues[i + 1][j], v2 = gridValues[i + 1][j + 1], v3 = gridValues[i][j + 1];
-                    let caseIdx = 0; if (v0 >= iso) caseIdx += 1; if (v1 >= iso) caseIdx += 2; if (v2 >= iso) caseIdx += 4; if (v3 >= iso) caseIdx += 8;
+                    const v0 = gridValues[i][j], v1 = gridValues[i + 1][j];
+                    const v2 = gridValues[i + 1][j + 1], v3 = gridValues[i][j + 1];
+                    let caseIdx = 0;
+                    if (v0 >= iso) caseIdx += 1;
+                    if (v1 >= iso) caseIdx += 2;
+                    if (v2 >= iso) caseIdx += 4;
+                    if (v3 >= iso) caseIdx += 8;
                     if (caseIdx === 0 || caseIdx === 15) continue;
 
-                    const gp = (p0: Vector2D, p1: Vector2D, va0: number, va1: number) => { const t = (iso - va0) / (va1 - va0); return { x: lerp(p0.x, p1.x, t), y: lerp(p0.y, p1.y, t) }; };
-                    const p0 = { x, y }, p1 = { x: x + cellSize, y }, p2 = { x: x + cellSize, y: y + cellSize }, p3 = { x, y: y + cellSize };
-                    const e0 = gp(p0, p1, v0, v1), e1 = gp(p1, p2, v1, v2), e2 = gp(p2, p3, v2, v3), e3 = gp(p3, p0, v3, v0);
-                    const dl = (a: Vector2D, b: Vector2D) => { ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); };
+                    const gp = (p0: Vector2D, p1: Vector2D, va0: number, va1: number) => {
+                        const t = (iso - va0) / (va1 - va0);
+                        return { x: lerp(p0.x, p1.x, t), y: lerp(p0.y, p1.y, t) };
+                    };
+                    const p0 = { x, y }, p1 = { x: x + cellSize, y };
+                    const p2 = { x: x + cellSize, y: y + cellSize }, p3 = { x, y: y + cellSize };
+                    const e0 = gp(p0, p1, v0, v1), e1 = gp(p1, p2, v1, v2);
+                    const e2 = gp(p2, p3, v2, v3), e3 = gp(p3, p0, v3, v0);
+                    const dl = (a: Vector2D, b: Vector2D) => {
+                        ctx.moveTo(a.x, a.y);
+                        ctx.lineTo(b.x, b.y);
+                    };
 
-                    switch (caseIdx) { case 1: case 14: dl(e3, e0); break; case 2: case 13: dl(e0, e1); break; case 3: case 12: dl(e3, e1); break; case 4: case 11: dl(e1, e2); break; case 5: dl(e0, e1); dl(e2, e3); break; case 6: case 9: dl(e0, e2); break; case 7: case 8: dl(e3, e2); break; case 10: dl(e3, e0); dl(e1, e2); break; }
+                    switch (caseIdx) {
+                        case 1: case 14: dl(e3, e0); break;
+                        case 2: case 13: dl(e0, e1); break;
+                        case 3: case 12: dl(e3, e1); break;
+                        case 4: case 11: dl(e1, e2); break;
+                        case 5: dl(e0, e1); dl(e2, e3); break;
+                        case 6: case 9: dl(e0, e2); break;
+                        case 7: case 8: dl(e3, e2); break;
+                        case 10: dl(e3, e0); dl(e1, e2); break;
+                    }
                 }
             }
             ctx.stroke();
         }
     }
 
-    cleanup() { }
+    cleanup() {
+        this.engine.events.off(EVENTS.WORM_BORN, this.handleWormBorn);
+    }
 }

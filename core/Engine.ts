@@ -1,5 +1,5 @@
-import { System, Leg } from './types';
-import { EventBus } from './events';
+import { System, Leg, Worm, WormState } from './types';
+import { EventBus, EVENTS } from './events';
 import { GameConfig } from './types';
 
 export class Engine {
@@ -19,12 +19,23 @@ export class Engine {
     mousePos: { x: number, y: number } = { x: 0, y: 0 };
     targetPos: { x: number, y: number } = { x: 0, y: 0 };
 
-    blobState = {
-        corePos: { x: 0, y: 0 },
-        coreVel: { x: 0, y: 0 },
-        legs: [] as Leg[],
-        isHoveringEdible: false
+    // Multi-Worm State
+    wormState: WormState = {
+        worms: new Map(),
+        activeWormId: 'worm-0',
+        nextWormId: 1
     };
+
+    // Backward compatibility getter
+    get blobState() {
+        return this.activeWorm;
+    }
+
+    get activeWorm(): Worm {
+        const worm = this.wormState.worms.get(this.wormState.activeWormId);
+        if (!worm) throw new Error(`Active worm ${this.wormState.activeWormId} not found`);
+        return worm;
+    }
 
     constructor(canvas: HTMLCanvasElement, config: GameConfig) {
         this.canvas = canvas;
@@ -42,6 +53,13 @@ export class Engine {
         this.canvas.addEventListener('touchstart', this.handleInput);
         this.canvas.addEventListener('mousemove', this.handleMouseMove);
         this.canvas.addEventListener('touchmove', this.handleMouseMove);
+        window.addEventListener('keydown', this.handleKeyDown);
+
+        // Create initial worm
+        this.createWorm('worm-0', null, 0, {
+            x: this.width / 2,
+            y: this.height / 2
+        });
     }
 
     addSystem(system: System) {
@@ -117,9 +135,62 @@ export class Engine {
         this.mousePos = { x, y };
     };
 
+    private handleKeyDown = (e: KeyboardEvent) => {
+        if (e.code === 'Space') {
+            e.preventDefault(); // Prevent page scrolling
+            this.events.emit(EVENTS.REPRODUCE_TRIGGERED, {});
+        }
+    };
+
+    createWorm(id: string, parentId: string | null, generation: number, pos: { x: number, y: number }): Worm {
+        const parent = parentId ? this.wormState.worms.get(parentId) : null;
+
+        const worm: Worm = {
+            id,
+            generation,
+            parentId,
+            birthTime: Date.now(),
+
+            // Inherit with mutations
+            hue: parent ? (parent.hue + (Math.random() - 0.5) * 30) % 360 : 200, // Start blue
+            sizeMultiplier: parent ? parent.sizeMultiplier * (0.95 + Math.random() * 0.1) : 1.0,
+            speedMultiplier: parent ? parent.speedMultiplier * (0.95 + Math.random() * 0.1) : 1.0,
+
+            // Lifecycle
+            satiation: parent ? 50 : 100, // Children start half-full
+            health: 100,
+            lastMeal: Date.now(),
+
+            // State
+            corePos: { ...pos },
+            coreVel: { x: 0, y: 0 },
+            legs: [],
+            targetPos: { ...pos },
+            isHoveringEdible: false,
+
+            // Vocabulary
+            vocabulary: new Set(parent ? this.inheritVocabulary(parent) : []),
+            swallowedWords: []
+        };
+
+        this.wormState.worms.set(id, worm);
+        this.events.emit(EVENTS.WORM_BORN, worm);
+        return worm;
+    }
+
+    private inheritVocabulary(parent: Worm): string[] {
+        const parentWords = Array.from(parent.vocabulary);
+        const inheritCount = Math.floor(parentWords.length * 0.6); // 60% inheritance
+
+        // Random selection
+        const shuffled = parentWords.sort(() => Math.random() - 0.5);
+        return shuffled.slice(0, inheritCount);
+    }
+
     cleanup() {
         this.stop();
         window.removeEventListener('resize', this.handleResize);
+        window.removeEventListener('keydown', this.handleKeyDown);
         this.canvas.removeEventListener('mousedown', this.handleInput);
         this.canvas.removeEventListener('touchstart', this.handleInput);
         this.canvas.removeEventListener('mousemove', this.handleMouseMove);

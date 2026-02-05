@@ -7,9 +7,6 @@ import { BLOB_CONSTANTS, COLORS } from '../constants';
 export class DigestionSystem implements System {
     private engine!: Engine;
 
-    private swallowedWords: SwallowedWord[] = [];
-    private stomachVocabulary: Set<string> = new Set();
-
     private eatingState: EatingState = EatingState.IDLE;
     private activeWord: { id: string, text: string, pos: { x: number, y: number } } | null = null;
 
@@ -17,6 +14,7 @@ export class DigestionSystem implements System {
     private activeLetterFeed: ActiveLetterFeed | null = null;
 
     private speechBubble: SpeechBubble | null = null;
+    private canReproduce = false;
 
     init(engine: Engine) {
         this.engine = engine;
@@ -24,59 +22,131 @@ export class DigestionSystem implements System {
         this.engine.events.on(EVENTS.THOUGHT_READY, this.handleThoughtReady);
         this.engine.events.on(EVENTS.STOMACH_CLEAR, this.handleStomachClear);
         this.engine.events.on(EVENTS.WORD_REMOVED, this.handleWordRemoved);
+        this.engine.events.on(EVENTS.READY_TO_REPRODUCE, this.handleReproductionReady);
+        this.engine.events.on(EVENTS.REPRODUCE_TRIGGERED, this.handleReproduceTrigger);
 
         this.hydrateStomach(3); // Start hydration with retries
     }
 
+    private handleReproductionReady = () => {
+        // Only set canReproduce flag, don't show prompt yet
+        this.canReproduce = true;
+    };
+
+    private handleReproduceTrigger = () => {
+        if (this.canReproduce) {
+            // Show confirmation prompt first
+            this.speechBubble = {
+                text: "splitting...",
+                opacity: 0,
+                timer: 120
+            };
+            this.reproduceWorm();
+        }
+    };
+
     private handleWordRemoved = (id: string) => {
-        this.swallowedWords = this.swallowedWords.filter(w => w.id !== id);
+        const worm = this.engine.activeWorm;
+        worm.swallowedWords = worm.swallowedWords.filter(w => w.id !== id);
         this.rebuildVocabulary();
     };
 
     private handleStomachClear = () => {
-        this.swallowedWords = [];
-        this.stomachVocabulary.clear();
+        const worm = this.engine.activeWorm;
+        worm.swallowedWords = [];
+        worm.vocabulary.clear();
         this.engine.events.emit(EVENTS.VOCAB_UPDATED, []);
     };
 
     private rebuildVocabulary() {
-        this.stomachVocabulary.clear();
-        this.swallowedWords.forEach(w => this.stomachVocabulary.add(w.text));
-        this.engine.events.emit(EVENTS.VOCAB_UPDATED, Array.from(this.stomachVocabulary));
+        const worm = this.engine.activeWorm;
+        worm.vocabulary.clear();
+        worm.swallowedWords.forEach(w => worm.vocabulary.add(w.text));
+        this.engine.events.emit(EVENTS.VOCAB_UPDATED, Array.from(worm.vocabulary));
     }
 
     private hydrateStomach(retries: number) {
-        fetch('/api/stomach')
+        fetch('/api/worms')
             .then(res => res.json())
             .then(data => {
-                if (data.words) {
-                    data.words.forEach((item: { id: string, text: string }) => {
-                        const word = item.text;
-                        this.stomachVocabulary.add(word);
+                if (data.worms && data.worms.length > 0) {
+                    console.log(`[HYDRATE] Restoring ${data.worms.length} worms with ${data.words.length} words`);
 
-                        const target = (['core', 'FL', 'FR', 'BL', 'BR'] as const)[Math.floor(Math.random() * 5)];
-                        const charWidth = 12;
-                        this.swallowedWords.push({
-                            id: item.id,
-                            text: word,
-                            pos: { ...this.engine.blobState.corePos },
-                            rotation: (Math.random() - 0.5) * 0.6,
-                            targetAnchor: target,
-                            letters: word.split('').map((char, i) => ({
-                                id: Math.random().toString(),
-                                char,
-                                pos: { ...this.engine.blobState.corePos },
-                                targetOffset: {
-                                    x: ((i * charWidth) - (word.length * charWidth) / 2),
-                                    y: 0
-                                },
-                                isSettled: true,
-                                opacity: 1
-                            })),
-                            isComplete: true
-                        });
+                    // Clear existing worms (except worm-0)
+                    this.engine.wormState.worms.clear();
+
+                    // Restore each worm
+                    data.worms.forEach((dbWorm: any) => {
+                        const worm = this.engine.createWorm(
+                            dbWorm.id,
+                            dbWorm.parent_id,
+                            dbWorm.generation,
+                            { x: window.innerWidth / 2, y: window.innerHeight / 2 }
+                        );
+
+                        // Restore worm properties
+                        worm.name = dbWorm.name;
+                        worm.hue = dbWorm.hue;
+                        worm.sizeMultiplier = dbWorm.size_multiplier;
+                        worm.speedMultiplier = dbWorm.speed_multiplier;
+                        worm.birthTime = dbWorm.birth_time;
+                        worm.satiation = dbWorm.satiation;
+                        worm.health = dbWorm.health;
+                        worm.lastMeal = dbWorm.last_meal;
+                        worm.vocabulary.clear();
+                        worm.swallowedWords = [];
                     });
-                    this.engine.events.emit(EVENTS.VOCAB_UPDATED, Array.from(this.stomachVocabulary));
+
+                    // Restore words to their respective worms
+                    if (data.words) {
+                        data.words.forEach((item: { id: string, worm_id: string, text: string }) => {
+                            const worm = this.engine.wormState.worms.get(item.worm_id);
+                            if (!worm) return;
+
+                            const word = item.text;
+                            worm.vocabulary.add(word);
+
+                            const target = (['core', 'FL', 'FR', 'BL', 'BR'] as const)[Math.floor(Math.random() * 5)];
+                            const charWidth = 12;
+                            worm.swallowedWords.push({
+                                id: item.id,
+                                text: word,
+                                pos: { ...worm.corePos },
+                                rotation: (Math.random() - 0.5) * 0.6,
+                                targetAnchor: target,
+                                letters: word.split('').map((char, i) => ({
+                                    id: Math.random().toString(),
+                                    char,
+                                    pos: { ...worm.corePos },
+                                    targetOffset: {
+                                        x: ((i * charWidth) - (word.length * charWidth) / 2),
+                                        y: 0
+                                    },
+                                    isSettled: true,
+                                    opacity: 1
+                                })),
+                                isComplete: true
+                            });
+                        });
+                    }
+
+                    // Update active worm ID
+                    const firstWormId = data.worms[0].id;
+                    this.engine.wormState.activeWormId = firstWormId;
+
+                    // Emit vocab update for active worm
+                    const activeWorm = this.engine.activeWorm;
+                    this.engine.events.emit(EVENTS.VOCAB_UPDATED, Array.from(activeWorm.vocabulary));
+
+                    // Emit hydration complete event so UI can update
+                    this.engine.events.emit(EVENTS.WORMS_HYDRATED, {});
+
+                    console.log(`[HYDRATE] ✅ Restored ${data.worms.length} worms successfully`);
+                } else {
+                    // No saved worms, create initial worm-0
+                    console.log('[HYDRATE] No saved worms, using default worm-0');
+                    this.saveWormState(this.engine.activeWorm);
+                    this.engine.events.emit(EVENTS.WORMS_HYDRATED, {});
                 }
             })
             .catch(err => {
@@ -87,6 +157,33 @@ export class DigestionSystem implements System {
                     console.error("Failed to hydrate stomach after retries", err);
                 }
             });
+    }
+
+    private async saveWormState(worm: any): Promise<void> {
+        const response = await fetch('/api/worms', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                id: worm.id,
+                name: worm.name,
+                generation: worm.generation,
+                parentId: worm.parentId,
+                hue: worm.hue,
+                sizeMultiplier: worm.sizeMultiplier,
+                speedMultiplier: worm.speedMultiplier,
+                birthTime: worm.birthTime,
+                satiation: worm.satiation,
+                health: worm.health,
+                lastMeal: worm.lastMeal
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to save worm: ${response.status}`);
+        }
+
+        // Wait for response body to ensure DB write completes
+        await response.json();
     }
 
     private handleTokenEaten = (data: { id: string, text: string, pos: { x: number, y: number } }) => {
@@ -102,9 +199,10 @@ export class DigestionSystem implements System {
 
     update(dt: number) {
         const corePos = this.engine.blobState.corePos;
+        const worm = this.engine.activeWorm;
 
         // 1. Swallowed Words Physics (Floating in stomach)
-        this.swallowedWords.forEach(word => {
+        worm.swallowedWords.forEach(word => {
             let anchor = corePos;
             if (word.targetAnchor !== 'core') {
                 const l = this.engine.blobState.legs.find(leg => leg.id === word.targetAnchor);
@@ -145,10 +243,11 @@ export class DigestionSystem implements System {
     }
 
     private startEating(w: { id: string, text: string, pos: { x: number, y: number } }) {
+        const worm = this.engine.activeWorm;
         this.letterQueue = w.text.split('').map((char, i) => ({ char, index: i }));
         const target = (['core', 'FL', 'FR', 'BL', 'BR'] as const)[Math.floor(Math.random() * 5)];
 
-        this.swallowedWords.push({
+        worm.swallowedWords.push({
             id: w.id,
             text: w.text,
             pos: { ...this.engine.blobState.corePos },
@@ -158,16 +257,19 @@ export class DigestionSystem implements System {
             isComplete: false
         });
 
-        this.stomachVocabulary.add(w.text);
+        worm.vocabulary.add(w.text);
+
+        // Emit word consumed event (for satiation increase)
+        this.engine.events.emit(EVENTS.WORD_CONSUMED, {});
 
         // Persist to Backend
         fetch('/api/eat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id: w.id, text: w.text })
+            body: JSON.stringify({ id: w.id, wormId: worm.id, text: w.text })
         }).catch(err => console.error("Failed to digest to server:", err));
 
-        this.engine.events.emit(EVENTS.VOCAB_UPDATED, Array.from(this.stomachVocabulary));
+        this.engine.events.emit(EVENTS.VOCAB_UPDATED, Array.from(worm.vocabulary));
         // Notify for UI Log
         this.engine.events.emit('WORD_LOG', { id: w.id, text: w.text });
 
@@ -176,9 +278,10 @@ export class DigestionSystem implements System {
     }
 
     private processEating() {
+        const worm = this.engine.activeWorm;
         if (!this.activeLetterFeed && this.letterQueue.length > 0) {
             const item = this.letterQueue.shift()!;
-            const currentWord = this.swallowedWords[this.swallowedWords.length - 1];
+            const currentWord = worm.swallowedWords[worm.swallowedWords.length - 1];
             this.activeLetterFeed = {
                 char: item.char,
                 pos: { ...this.engine.blobState.corePos },
@@ -193,7 +296,7 @@ export class DigestionSystem implements System {
             f.progress += 0.05;
 
             if (f.progress >= 1) {
-                const word = this.swallowedWords.find(w => w.id === f.wordId);
+                const word = worm.swallowedWords.find(w => w.id === f.wordId);
                 if (word) {
                     const charWidth = 12, totalWidth = word.text.length * charWidth, xOffset = (f.slotIndex * charWidth) - totalWidth / 2;
                     const cos = Math.cos(word.rotation), sin = Math.sin(word.rotation);
@@ -210,24 +313,193 @@ export class DigestionSystem implements System {
             }
         } else {
             this.eatingState = EatingState.IDLE;
-            if (this.swallowedWords.length > 0) this.swallowedWords[this.swallowedWords.length - 1].isComplete = true;
+            if (worm.swallowedWords.length > 0) worm.swallowedWords[worm.swallowedWords.length - 1].isComplete = true;
+        }
+    }
+
+    private async reproduceWorm() {
+        const parent = this.engine.activeWorm;
+        const childId = `worm-${this.engine.wormState.nextWormId++}`;
+        const parentWords = Array.from(parent.vocabulary);
+
+        console.log(`[REPRODUCE] Parent ${parent.id} has ${parentWords.length} words, attempting emotional split...`);
+
+        // Emit reproduction start event
+        this.engine.events.emit(EVENTS.REPRODUCTION_START, {});
+
+        try {
+            // Step 1: Emotionally split vocabulary using Gemini
+            const splitResponse = await fetch('/api/split-words', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ words: parentWords })
+            });
+            const { bucket1, bucket2 } = await splitResponse.json();
+
+            console.log(`[REPRODUCE] Split result - Parent keeps: ${bucket1.length}, Child gets: ${bucket2.length}`);
+
+            // Step 2: Create child worm with bucket2 words
+            const angle = Math.random() * Math.PI * 2;
+            const distance = 150;
+            const childPos = {
+                x: parent.corePos.x + Math.cos(angle) * distance,
+                y: parent.corePos.y + Math.sin(angle) * distance
+            };
+
+            const child = this.engine.createWorm(
+                childId,
+                parent.id,
+                parent.generation + 1,
+                childPos
+            );
+
+            // Step 3: Assign vocabularies
+            parent.vocabulary = new Set(bucket1);
+            child.vocabulary = new Set(bucket2);
+
+            // Step 4: Update swallowedWords to match new vocabularies
+            parent.swallowedWords = parent.swallowedWords.filter(w =>
+                parent.vocabulary.has(w.text)
+            );
+            child.swallowedWords = [];
+
+            // Add child's words to its stomach
+            bucket2.forEach(word => {
+                const target = (['core', 'FL', 'FR', 'BL', 'BR'] as const)[Math.floor(Math.random() * 5)];
+                const charWidth = 12;
+                child.swallowedWords.push({
+                    id: Math.random().toString(),
+                    text: word,
+                    pos: { ...child.corePos },
+                    rotation: (Math.random() - 0.5) * 0.6,
+                    targetAnchor: target,
+                    letters: word.split('').map((char, i) => ({
+                        id: Math.random().toString(),
+                        char,
+                        pos: { ...child.corePos },
+                        targetOffset: {
+                            x: ((i * charWidth) - (word.length * charWidth) / 2),
+                            y: 0
+                        },
+                        isSettled: true,
+                        opacity: 1
+                    })),
+                    isComplete: true
+                });
+            });
+
+            // Step 5: Name both worms in parallel using Gemini
+            try {
+                const namingPromises = [];
+
+                // Name parent if it doesn't have a name
+                if (!parent.name) {
+                    namingPromises.push(
+                        fetch('/api/name-worm', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ words: bucket1 })
+                        }).then(res => res.json()).then(data => {
+                            parent.name = data.name;
+                            console.log(`[REPRODUCE] Parent worm named: "${data.name}"`);
+                        })
+                    );
+                }
+
+                // Name child
+                namingPromises.push(
+                    fetch('/api/name-worm', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ words: bucket2 })
+                    }).then(res => res.json()).then(data => {
+                        child.name = data.name;
+                        console.log(`[REPRODUCE] Child worm named: "${data.name}"`);
+                    })
+                );
+
+                // Run naming in parallel
+                await Promise.all(namingPromises);
+            } catch (err) {
+                console.error("Naming failed:", err);
+                if (!parent.name) parent.name = 'blob';
+                if (!child.name) child.name = 'blob';
+            }
+
+            // Step 6: Parent loses satiation
+            parent.satiation = Math.max(0, parent.satiation - 40);
+
+            // Step 7: Save parent and child worm state to DB FIRST (before words)
+            // This ensures the worms exist before we try to save their words
+            await this.saveWormState(parent);
+            await this.saveWormState(child);
+
+            // Step 8: Persist word changes to database
+            // Delete all old words for parent, then re-add current words
+            await fetch(`/api/worms/${parent.id}/words`, { method: 'DELETE' })
+                .catch(err => console.error('[REPRODUCE] Failed to clear parent words:', err));
+
+            // Save parent's remaining words
+            for (const word of parent.swallowedWords) {
+                await fetch('/api/eat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: word.id, wormId: parent.id, text: word.text })
+                }).catch(err => console.error('[REPRODUCE] Failed to save parent word:', err));
+            }
+
+            // Save child's words (child worm now exists in DB)
+            for (const word of child.swallowedWords) {
+                await fetch('/api/eat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: word.id, wormId: child.id, text: word.text })
+                }).catch(err => console.error('[REPRODUCE] Failed to save child word:', err));
+            }
+
+            // Step 9: Emit events
+            this.engine.events.emit(EVENTS.MITOSIS_ANIMATION, {
+                parentPos: parent.corePos,
+                childPos: child.corePos
+            });
+            this.engine.events.emit(EVENTS.VOCAB_UPDATED, Array.from(parent.vocabulary));
+
+            this.canReproduce = false;
+
+            console.log(`[REPRODUCE] Success! Parent: ${bucket1.length}w, Child "${child.name}": ${bucket2.length}w`);
+
+            // Emit reproduction complete event
+            this.engine.events.emit(EVENTS.REPRODUCTION_COMPLETE, {});
+
+        } catch (err) {
+            console.error("[REPRODUCE] Failed:", err);
+            this.speechBubble = {
+                text: "split failed (ಥ_ಥ)",
+                opacity: 0,
+                timer: 120
+            };
+            this.canReproduce = false;
+
+            // Emit reproduction complete event even on failure
+            this.engine.events.emit(EVENTS.REPRODUCTION_COMPLETE, {});
         }
     }
 
     draw(ctx: CanvasRenderingContext2D) {
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        const core = this.engine.blobState.corePos;
 
-        // Draw settled words inside
-        this.swallowedWords.forEach(word => {
-            word.letters.forEach(letter => {
-                ctx.save();
-                ctx.translate(letter.pos.x, letter.pos.y);
-                ctx.rotate(word.rotation);
-                ctx.font = `bold ${BLOB_CONSTANTS.BASE_LETTER_SIZE}px 'Space Mono'`;
-                ctx.fillStyle = COLORS.TEXT_IN_BLOB;
-                ctx.fillText(letter.char, 0, 0);
-                ctx.restore();
+        // Draw settled words inside ALL worms
+        this.engine.wormState.worms.forEach(worm => {
+            worm.swallowedWords.forEach(word => {
+                word.letters.forEach(letter => {
+                    ctx.save();
+                    ctx.translate(letter.pos.x, letter.pos.y);
+                    ctx.rotate(word.rotation);
+                    ctx.font = `bold ${BLOB_CONSTANTS.BASE_LETTER_SIZE}px 'Space Mono'`;
+                    ctx.fillStyle = COLORS.TEXT_IN_BLOB;
+                    ctx.fillText(letter.char, 0, 0);
+                    ctx.restore();
+                });
             });
         });
 
@@ -240,6 +512,7 @@ export class DigestionSystem implements System {
 
         // Draw Speech Bubble
         if (this.speechBubble) {
+            const core = this.engine.blobState.corePos;
             const b = this.speechBubble;
             ctx.save();
             ctx.globalAlpha = b.opacity;
@@ -271,5 +544,7 @@ export class DigestionSystem implements System {
         this.engine.events.off(EVENTS.THOUGHT_READY, this.handleThoughtReady);
         this.engine.events.off(EVENTS.WORD_REMOVED, this.handleWordRemoved);
         this.engine.events.off(EVENTS.STOMACH_CLEAR, this.handleStomachClear);
+        this.engine.events.off(EVENTS.READY_TO_REPRODUCE, this.handleReproductionReady);
+        this.engine.events.off(EVENTS.REPRODUCE_TRIGGERED, this.handleReproduceTrigger);
     }
 }
