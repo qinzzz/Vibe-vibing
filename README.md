@@ -51,30 +51,48 @@ npm run dev:all
 
 ## Changelog
 
-### Day 2
+### Day 2 - Jerry
 
 Functionality:
-- Added a health bar and a satiation bar. Health declines over time unless you give the worm attention. Satiation increases when you feed words to the worm.
-- Added the ability for worms / blobs / Gluttons to split. They will only split if both of the following conditions are met: 1. Satiation 100% 2. Words consumed >= 8.
-- Splitting worms will divide half their words with the new worm, using AI to group words by the sentiment they give off. New unnamed worms will automatically be assigned a name based on the sentiment of the words it starts with.
-- When worms > 1, a new bar at the bottom sllows you to select which one is acitvely being controlled.
-- When the number of unconsumed words is low, nee words will be AI generated and filled in.
 
-Infra:
-- Added support for OpenAI compatible APIs (Groq, LM Studio, Snowflake 😉, etc)
-- Moved LLM calls from frontend to server
-- Default Gemini model used is now 2.5 Flash (seems like thats the one that comes with a free API key)
+* Added a health bar and a satiation bar. Health declines over time unless you give the worm attention. Satiation increases when you feed words to the worm.
+* Added the ability for worms / blobs / Gluttons to split. They will only split if both of the following conditions are met: 1. Satiation 100% 2. Words consumed >= 8.
+* Splitting worms will divide half their words with the new worm, using AI to group words by the sentiment they give off. New unnamed worms will automatically be assigned a name based on the sentiment of the words it starts with.
+* When worms > 1, a new bar at the bottom allows you to select which one is actively being controlled.
+* When the number of unconsumed words is low, new words will be AI generated and filled in.
+  Infra:
+* Added support for OpenAI compatible APIs (Groq, LM Studio, Snowflake 😉, etc)
+* Moved LLM calls from frontend to server
+* Default Gemini model used is now 2.5 Flash (seems like thats the one that comes with a free API key)
 
 ## 🛤 Future Roadmap (Suggested Steps)
-We are constantly looking to evolve the Glutton's consciousness. Some planned/suggested enhancements include:
-- [ ] **Dynamic Background Generation**: Transition from static word fragments to real-time AI-generated "void debris" based on the Glutton's mood.
-- [ ] **Visual Evolution**: Modify the Glutton's color, size, or skin thickness based on the *complexity* or *sentiment* of the words it consumes.
-- [ ] **Ambient Soundscapes**: Procedural background music that shifts in key/tempo as the stomach fills.
-- [ ] **Multi-Blob Interaction**: What happens when two Gluttons meet in the void?
+
+## We are constantly looking to evolve the Glutton's consciousness. Some planned/suggested enhancements include:
 
 ## 💡 Contributions & Tweaks
-This is an open experiment. **Any tweaks, design changes, or bug fixes are highly welcomed!** 
-Feel free to refactor the physics, adjust the AI prompts, or polish the UI. This AI is hungry for change as much as it is for words.
 
----
+## This is an open experiment. **Any tweaks, design changes, or bug fixes are highly welcomed!** Feel free to refactor the physics, adjust the AI prompts, or polish the UI. This AI is hungry for change as much as it is for words.
+
+### Day 3 - Chico
+
+Functionality:
+
+* Added **infinite canvas** allowing the Glutton to roam across a larger navigable space.
+* Added environmental systems:
+
+  * **News Storm** — Swirls of wind made of news headlines.
+  * **Stream of Consciousness** — a continuous flowing river of thoughts moving across the canvas (streaming from r/Showerthoughts posts).
+* Implemented internal **soul attributes** derived from consumed words (mood, tendencies, etc.).
+* Added a generated **motto** summarizing the Glutton's current identity.
+* Implemented digestion states for words: `fresh → digesting → absorbed`, influencing internal attributes over time.
+* Fixed navigation issue where nearby words still resulted in long travel time.
+  Systems & Design:
+* Introduced layered environment model (void, weather, stream) so multiple ambient systems can coexist.
+* Added toggleable weather/debug modes for experimentation.
+* Added support for real text streams (news, poetry, subreddit thoughts) with slow-refresh ambient behavior.
+
+## 💡 Contributions & Tweaks
+
+## This is an open experiment. **Any tweaks, design changes, or bug fixes are highly welcomed!** Feel free to refactor the physics, adjust the AI prompts, or polish the UI. This AI is hungry for change as much as it is for words.
+
 *Created as an exploration of generative personality and digital-organic synergy.*
