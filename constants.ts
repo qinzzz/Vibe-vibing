@@ -69,6 +69,99 @@ export const BACKGROUND_PARAGRAPHS = [
   "Beware the silence between the words. It is there that the glutton waits, patient and hollow, craving the next rhythmic sequence of phonemes."
 ];
 
+export const STREAM_SOURCE = [
+  {
+    id: "st_001",
+    text: "With the internet becoming more and more AI by the day",
+    source: "r/Showerthoughts",
+    timestamp: 1707191840
+  },
+  {
+    id: "st_002",
+    text: "Odysseus expects the Spanish Inquisition",
+    source: "r/Showerthoughts",
+    timestamp: 1707180000
+  },
+  {
+    id: "st_003",
+    text: "Reflecting on the accuracy of a memory makes it less accurate",
+    source: "r/Showerthoughts",
+    timestamp: 1707140000
+  },
+  {
+    id: "st_004",
+    text: "The adult version of finding out Santa isn't real",
+    source: "r/Showerthoughts",
+    timestamp: 1707190000
+  },
+  {
+    id: "st_005",
+    text: "We are all weirdly okay with computer cameras needing a way to cover the lens",
+    source: "r/Showerthoughts",
+    timestamp: 1707100000
+  },
+  {
+    id: "st_006",
+    text: "There are probably a few royal chefs who got killed because of cilantro",
+    source: "r/Showerthoughts",
+    timestamp: 1707000000
+  },
+  {
+    id: "st_007",
+    text: "Comedy is here to make us forget we're going to die",
+    source: "r/Showerthoughts",
+    timestamp: 1707050000
+  },
+  {
+    id: "st_008",
+    text: "The difference between a space heater and an air fryer is the size of the room",
+    source: "r/Showerthoughts",
+    timestamp: 1707040000
+  },
+  {
+    id: "st_009",
+    text: "Statistically speaking someone is the unluckiest person on the planet",
+    source: "r/Showerthoughts",
+    timestamp: 1707020000
+  },
+  {
+    id: "st_010",
+    text: "At some point good memories stop being comfort and start being contrast",
+    source: "r/Showerthoughts",
+    timestamp: 1706990000
+  },
+  {
+    id: "st_011",
+    text: "Humans evolved a larynx optimized for speech because cooperation saved more lives",
+    source: "r/Showerthoughts",
+    timestamp: 1706950000
+  },
+  {
+    id: "st_012",
+    text: "Conversations are in second person",
+    source: "r/Showerthoughts",
+    timestamp: 1706900000
+  },
+  {
+    id: "st_013",
+    text: "Mass layoffs increase competition for the remaining jobs",
+    source: "r/Showerthoughts",
+    timestamp: 1706880000
+  },
+  {
+    id: "st_014",
+    text: "Life can be viewed as naturally occurring nanotech",
+    source: "r/Showerthoughts",
+    timestamp: 1706870000
+  },
+  {
+    id: "st_015",
+    text: "At some point we may not distinguish reality from simulation",
+    source: "r/Showerthoughts",
+    timestamp: 1706850000
+  }
+] as const;
+
 export const LAYOUT_CONSTANTS = {
   BLOCK_WIDTH: 300,
   FONT_SIZE: 16,

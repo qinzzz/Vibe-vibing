@@ -16,8 +16,11 @@ export class Engine {
     get height() { return window.innerHeight; }
 
     // Shared World State (Accessible by Systems)
+    cameraPos: { x: number, y: number } = { x: 0, y: 0 };
+    mouseScreenPos: { x: number, y: number } = { x: 0, y: 0 };
     mousePos: { x: number, y: number } = { x: 0, y: 0 };
     targetPos: { x: number, y: number } = { x: 0, y: 0 };
+    private readonly cameraFollowLerp = 0.12;
 
     // Multi-Worm State
     wormState: WormState = {
@@ -56,10 +59,15 @@ export class Engine {
         window.addEventListener('keydown', this.handleKeyDown);
 
         // Create initial worm
-        this.createWorm('worm-0', null, 0, {
+        const initialPos = {
             x: this.width / 2,
             y: this.height / 2
-        });
+        };
+        this.createWorm('worm-0', null, 0, initialPos);
+        this.cameraPos = { ...initialPos };
+        this.targetPos = { ...initialPos };
+        this.mouseScreenPos = { x: this.width / 2, y: this.height / 2 };
+        this.mousePos = this.screenToWorld(this.mouseScreenPos);
     }
 
     addSystem(system: System) {
@@ -96,18 +104,59 @@ export class Engine {
     };
 
     private update(dt: number) {
+        this.updateCamera();
+        this.mousePos = this.screenToWorld(this.mouseScreenPos);
+
         for (const system of this.systems) {
             system.update(dt);
         }
+
+        this.updateCamera();
+        this.mousePos = this.screenToWorld(this.mouseScreenPos);
     }
 
     private draw() {
         this.ctx.fillStyle = '#000';
-        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+        this.ctx.fillRect(0, 0, this.width, this.height);
+
+        this.ctx.save();
+        this.ctx.translate(this.width / 2 - this.cameraPos.x, this.height / 2 - this.cameraPos.y);
 
         for (const system of this.systems) {
             system.draw(this.ctx);
         }
+
+        this.ctx.restore();
+    }
+
+    private updateCamera() {
+        const activeWorm = this.wormState.worms.get(this.wormState.activeWormId);
+        if (!activeWorm) return;
+        this.cameraPos.x += (activeWorm.corePos.x - this.cameraPos.x) * this.cameraFollowLerp;
+        this.cameraPos.y += (activeWorm.corePos.y - this.cameraPos.y) * this.cameraFollowLerp;
+    }
+
+    screenToWorld(screen: { x: number, y: number }) {
+        return {
+            x: screen.x + this.cameraPos.x - this.width / 2,
+            y: screen.y + this.cameraPos.y - this.height / 2
+        };
+    }
+
+    worldToScreen(world: { x: number, y: number }) {
+        return {
+            x: world.x - this.cameraPos.x + this.width / 2,
+            y: world.y - this.cameraPos.y + this.height / 2
+        };
+    }
+
+    private getScreenCoords(e: MouseEvent | TouchEvent) {
+        const rect = this.canvas.getBoundingClientRect();
+        const point = e instanceof TouchEvent ? e.touches[0] : e;
+        return {
+            x: point.clientX - rect.left,
+            y: point.clientY - rect.top
+        };
     }
 
     private handleResize = () => {
@@ -116,23 +165,23 @@ export class Engine {
         this.canvas.height = window.innerHeight * dpr;
         this.canvas.style.width = `${window.innerWidth}px`;
         this.canvas.style.height = `${window.innerHeight}px`;
-        this.ctx.scale(dpr, dpr);
+        this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
 
     private handleInput = (e: MouseEvent | TouchEvent) => {
-        const rect = this.canvas.getBoundingClientRect();
-        const x = (e instanceof TouchEvent ? e.touches[0].clientX : e.clientX) - rect.left;
-        const y = (e instanceof TouchEvent ? e.touches[0].clientY : e.clientY) - rect.top;
+        const screenPos = this.getScreenCoords(e);
+        this.mouseScreenPos = screenPos;
+        const worldPos = this.screenToWorld(screenPos);
 
-        this.targetPos = { x, y };
-        this.events.emit('INPUT_START', { x, y });
+        this.activeWorm.targetPos = worldPos;
+        this.targetPos = worldPos;
+        this.events.emit('INPUT_START', worldPos);
     };
 
     private handleMouseMove = (e: MouseEvent | TouchEvent) => {
-        const rect = this.canvas.getBoundingClientRect();
-        const x = (e instanceof TouchEvent ? e.touches[0].clientX : e.clientX) - rect.left;
-        const y = (e instanceof TouchEvent ? e.touches[0].clientY : e.clientY) - rect.top;
-        this.mousePos = { x, y };
+        const screenPos = this.getScreenCoords(e);
+        this.mouseScreenPos = screenPos;
+        this.mousePos = this.screenToWorld(screenPos);
     };
 
     private handleKeyDown = (e: KeyboardEvent) => {

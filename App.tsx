@@ -26,6 +26,21 @@ const App: React.FC = () => {
     coreLerp: BLOB_CONSTANTS.CORE_LERP,
     showSkeleton: true,
   });
+  const [weatherDebug, setWeatherDebug] = useState({
+    entryWind: 0.74,
+    entrySwirl: 0.52,
+    entrySpeed: 1.00,
+    dragStrength: 1.00,
+    targetPull: 1.00,
+    landingRadius: 1.00,
+    landingSpeed: 1.00,
+  });
+  const [stormWeather, setStormWeather] = useState({
+    baseWindSpeed: 1.00,
+    speedVariance: 0.22,
+    volatility: 0.55,
+  });
+  const [isStormMode, setIsStormMode] = useState(false);
 
   const [isRightOpen, setIsRightOpen] = useState(false);
   const [isLeftOpen, setIsLeftOpen] = useState(false);
@@ -41,6 +56,9 @@ const App: React.FC = () => {
 
   const handleEngineInit = useCallback((engine: Engine) => {
     engineRef.current = engine;
+    engine.events.emit(EVENTS.NEWS_STORM_DEBUG_UPDATED, weatherDebug);
+    engine.events.emit(EVENTS.NEWS_STORM_MODE_UPDATED, { enabled: isStormMode });
+    engine.events.emit(EVENTS.NEWS_STORM_WEATHER_UPDATED, stormWeather);
 
     // Listen for worm lifecycle events
     engine.events.on(EVENTS.WORM_BORN, updateWormList);
@@ -70,6 +88,21 @@ const App: React.FC = () => {
     });
   }, []);
 
+  useEffect(() => {
+    if (!engineRef.current) return;
+    engineRef.current.events.emit(EVENTS.NEWS_STORM_DEBUG_UPDATED, weatherDebug);
+  }, [weatherDebug]);
+
+  useEffect(() => {
+    if (!engineRef.current) return;
+    engineRef.current.events.emit(EVENTS.NEWS_STORM_MODE_UPDATED, { enabled: isStormMode });
+  }, [isStormMode]);
+
+  useEffect(() => {
+    if (!engineRef.current) return;
+    engineRef.current.events.emit(EVENTS.NEWS_STORM_WEATHER_UPDATED, stormWeather);
+  }, [stormWeather]);
+
   const updateWormList = () => {
     if (!engineRef.current) return;
     const wormArray = Array.from(engineRef.current.wormState.worms.values());
@@ -85,6 +118,8 @@ const App: React.FC = () => {
     // Update swallowed words for the new active worm
     const worm = engineRef.current.wormState.worms.get(wormId);
     if (worm) {
+      // Keep legacy shared target in sync with the selected worm's own destination.
+      engineRef.current.targetPos = { ...worm.targetPos };
       setSwallowedWords(worm.swallowedWords.map(w => ({ id: w.id, text: w.text })));
     }
   };
@@ -113,6 +148,13 @@ const App: React.FC = () => {
     } catch (e) {
       console.error("Clear failed", e);
     }
+  };
+
+  const handleSendNewsWind = () => {
+    if (!engineRef.current) return;
+    engineRef.current.events.emit(EVENTS.NEWS_STORM_TRIGGERED, {
+      placement: isStormMode ? 'viewport' : 'anchor'
+    });
   };
 
   return (
@@ -255,6 +297,91 @@ const App: React.FC = () => {
             <span className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></span>
             GLUTTON CONFIG
           </h2>
+
+          <ControlGroup title="News Storm">
+            <p className="text-white/50 text-[11px] leading-relaxed mb-3">
+              Launch a deceleration-only headline vortex. Letters enter already in motion and settle into readable lanes as momentum fades.
+            </p>
+            <div className="mb-3">
+              <Toggle
+                label="Storm Mode"
+                value={isStormMode}
+                onChange={setIsStormMode}
+              />
+              <p className="text-[10px] text-white/40 mt-2 leading-relaxed">
+                Auto-spawns roaming winds across the visible world.
+              </p>
+            </div>
+            <Slider
+              label="Base Wind Speed"
+              desc="Main storm speed level for auto weather."
+              value={stormWeather.baseWindSpeed} min={0.5} max={1.8} step={0.01}
+              onChange={(v: number) => setStormWeather(p => ({ ...p, baseWindSpeed: v }))}
+            />
+            <Slider
+              label="Speed Variance"
+              desc="How far each gust can deviate from base."
+              value={stormWeather.speedVariance} min={0.0} max={0.8} step={0.01}
+              onChange={(v: number) => setStormWeather(p => ({ ...p, speedVariance: v }))}
+            />
+            <Slider
+              label="Weather Volatility"
+              desc="How aggressively weather patterns change."
+              value={stormWeather.volatility} min={0.1} max={1.0} step={0.01}
+              onChange={(v: number) => setStormWeather(p => ({ ...p, volatility: v }))}
+            />
+            <button
+              onClick={handleSendNewsWind}
+              className="w-full px-3 py-2 rounded-md border border-blue-400/30 bg-blue-500/10 text-blue-200 text-xs uppercase tracking-wide hover:bg-blue-500/20 transition-colors"
+            >
+              Send Wind
+            </button>
+          </ControlGroup>
+
+          <ControlGroup title="Weather Debug">
+            <Slider
+              label="Entry Wind"
+              desc="Higher = cleaner directional inflow."
+              value={weatherDebug.entryWind} min={0.1} max={1.8} step={0.01}
+              onChange={(v: number) => setWeatherDebug(p => ({ ...p, entryWind: v }))}
+            />
+            <Slider
+              label="Entry Swirl"
+              desc="Higher = stronger incoming vortex curl."
+              value={weatherDebug.entrySwirl} min={0.1} max={1.8} step={0.01}
+              onChange={(v: number) => setWeatherDebug(p => ({ ...p, entrySwirl: v }))}
+            />
+            <Slider
+              label="Entry Speed"
+              desc="Initial momentum of letters."
+              value={weatherDebug.entrySpeed} min={0.4} max={2.4} step={0.01}
+              onChange={(v: number) => setWeatherDebug(p => ({ ...p, entrySpeed: v }))}
+            />
+            <Slider
+              label="Drag Strength"
+              desc="Higher = faster momentum loss."
+              value={weatherDebug.dragStrength} min={0.2} max={2.5} step={0.01}
+              onChange={(v: number) => setWeatherDebug(p => ({ ...p, dragStrength: v }))}
+            />
+            <Slider
+              label="Target Pull"
+              desc="How strongly letters commit to target orbit."
+              value={weatherDebug.targetPull} min={0.2} max={2.2} step={0.01}
+              onChange={(v: number) => setWeatherDebug(p => ({ ...p, targetPull: v }))}
+            />
+            <Slider
+              label="Landing Radius"
+              desc="Distance threshold for final lock."
+              value={weatherDebug.landingRadius} min={0.3} max={2.2} step={0.01}
+              onChange={(v: number) => setWeatherDebug(p => ({ ...p, landingRadius: v }))}
+            />
+            <Slider
+              label="Landing Speed"
+              desc="Speed threshold for final lock."
+              value={weatherDebug.landingSpeed} min={0.3} max={2.2} step={0.01}
+              onChange={(v: number) => setWeatherDebug(p => ({ ...p, landingSpeed: v }))}
+            />
+          </ControlGroup>
 
           <ControlGroup title="Visibility">
             <Toggle

@@ -6,6 +6,7 @@ import { BackgroundSystem } from '../systems/BackgroundSystem';
 import { DigestionSystem } from '../systems/DigestionSystem';
 import { CursorSystem } from '../systems/CursorSystem';
 import { WormLifecycleSystem } from '../systems/WormLifecycleSystem';
+import { ConsciousnessStreamSystem } from '../systems/ConsciousnessStreamSystem';
 import { AudioService } from '../services/AudioService';
 import { ThoughtService } from '../services/ThoughtService';
 
@@ -22,6 +23,7 @@ export const useEngine = (config: GameConfig, onWordSwallowed?: (word: string) =
         engineRef.current = engine;
 
         // Add Systems (Order matters!)
+        engine.addSystem(new ConsciousnessStreamSystem());
         engine.addSystem(new PhysicsSystem());
         engine.addSystem(new BackgroundSystem());
         engine.addSystem(new DigestionSystem());

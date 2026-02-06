@@ -47,7 +47,7 @@ export class PhysicsSystem implements System {
     update(dt: number) {
         const s = this.engine.config;
         const core = this.engine.blobState.corePos;
-        const target = this.engine.targetPos;
+        const target = this.engine.blobState.targetPos;
 
         const prevCore = { ...core };
 
