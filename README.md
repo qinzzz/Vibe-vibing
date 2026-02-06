@@ -65,24 +65,15 @@ Functionality:
 * Moved LLM calls from frontend to server
 * Default Gemini model used is now 2.5 Flash (seems like thats the one that comes with a free API key)
 
-## 🛤 Future Roadmap (Suggested Steps)
-
-## We are constantly looking to evolve the Glutton's consciousness. Some planned/suggested enhancements include:
-
-## 💡 Contributions & Tweaks
-
-## This is an open experiment. **Any tweaks, design changes, or bug fixes are highly welcomed!** Feel free to refactor the physics, adjust the AI prompts, or polish the UI. This AI is hungry for change as much as it is for words.
-
 ### Day 3 - Chico
 
 Functionality:
 
 * Added **infinite canvas** allowing the Glutton to roam across a larger navigable space.
 * Added environmental systems:
-
-  * **News Storm** — Swirls of wind made of news headlines.
+  * **News Storm** — Swirls of wind made of news headlines.(streaming from GDELT - A steady stream of real-world headlines)
   * **Stream of Consciousness** — a continuous flowing river of thoughts moving across the canvas (streaming from r/Showerthoughts posts).
-* Implemented internal **soul attributes** derived from consumed words (mood, tendencies, etc.).
+* Implemented internal **soul**, attributes derived from consumed words (mood, tendencies, etc.).
 * Added a generated **motto** summarizing the Glutton's current identity.
 * Implemented digestion states for words: `fresh → digesting → absorbed`, influencing internal attributes over time.
 * Fixed navigation issue where nearby words still resulted in long travel time.
@@ -91,8 +82,19 @@ Functionality:
 * Added toggleable weather/debug modes for experimentation.
 * Added support for real text streams (news, poetry, subreddit thoughts) with slow-refresh ambient behavior.
 
+## 🛤 Future Roadmap (Suggested Steps)
+We are constantly looking to evolve the Glutton's consciousness. Some planned/suggested enhancements include:
+- [ ] **Dynamic Background Generation**: Transition from static word fragments to real-time AI-generated "void debris" based on the Glutton's mood.
+- [ ] **Visual Evolution**: Modify the Glutton's color, size, or skin thickness based on the *complexity* or *sentiment* of the words it consumes.
+- [ ] **Ambient Soundscapes**: Procedural background music that shifts in key/tempo as the stomach fills.
+- [ ] **Environment**: Can we add good sources of text? Are there other environmental elements to add?
+- [ ] **Multi-Blob Interaction**: What happens when two Gluttons meet in the void?
+- [ ] **Blob Behavior**: Glutton now has a soul, how might these traits change its appearance or behavior?
+
 ## 💡 Contributions & Tweaks
+This is an open experiment. **Any tweaks, design changes, or bug fixes are highly welcomed!** 
+Feel free to refactor the physics, adjust the AI prompts, or polish the UI. This AI is hungry for change as much as it is for words.
 
-## This is an open experiment. **Any tweaks, design changes, or bug fixes are highly welcomed!** Feel free to refactor the physics, adjust the AI prompts, or polish the UI. This AI is hungry for change as much as it is for words.
-
+---
 *Created as an exploration of generative personality and digital-organic synergy.*
+
