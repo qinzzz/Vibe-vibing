@@ -196,11 +196,13 @@ const App: React.FC = () => {
     });
   };
 
-  const handleMoodInfluence = (mood: string) => {
+  const [hoveredWormId, setHoveredWormId] = useState<string | null>(null);
+
+  const handleMoodInfluence = (mood: string, targetId?: string) => {
     if (!engineRef.current) return;
 
-    const activeWormId = engineRef.current.wormState.activeWormId;
-    console.log('Influencing mood:', mood, 'for worm:', activeWormId);
+    const idToInfluence = targetId || engineRef.current.wormState.activeWormId;
+    console.log('Influencing mood:', mood, 'for worm:', idToInfluence);
 
     let axes: any = {};
 
@@ -234,7 +236,7 @@ const App: React.FC = () => {
         break;
     }
 
-    engineRef.current.events.emit(EVENTS.FORCE_MOOD, { wormId: activeWormId, axes });
+    engineRef.current.events.emit(EVENTS.FORCE_MOOD, { wormId: idToInfluence, axes });
   };
 
   return (
@@ -254,62 +256,183 @@ const App: React.FC = () => {
         onEngineInit={handleEngineInit}
       />
 
-      {/* Worm Selector UI - Moved to Bottom */}
-      {worms.length > 1 && (
-        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-30 flex gap-2 pointer-events-auto">
-          <div className="bg-black/80 backdrop-blur-md px-3 py-2 rounded-lg border border-white/10">
-            <div className="text-white/50 text-[10px] uppercase tracking-widest mb-2">
-              Worms ({worms.length})
-            </div>
-            <div className="flex gap-2">
-              {worms.map(worm => {
-                const isActive = worm.id === activeWormId;
-                return (
-                  <button
-                    key={worm.id}
-                    onClick={() => switchWorm(worm.id)}
-                    className={`px-3 py-2 rounded-md transition-all duration-200 ${isActive
-                      ? 'bg-white/20 border-2'
-                      : 'bg-black/60 border border-white/10 hover:bg-white/10'
-                      }`}
-                    style={{
-                      borderColor: isActive ? `hsl(${worm.hue}, 50%, 50%)` : undefined,
-                    }}
-                  >
-                    <div className="flex items-center gap-2">
-                      <div
-                        className="w-3 h-3 rounded-full"
-                        style={{ backgroundColor: `hsl(${worm.hue}, 50%, 50%)` }}
-                      />
-                      <span className="text-white/80 text-xs font-mono">
-                        {worm.name || `Cycle ${1 + worm.generation}`}
-                      </span>
-                      <span className="text-white/60 text-[10px]">
-                        {worm.vocabulary.size}w
-                      </span>
+      {/* Worm Selector UI - Bottom Center */}
+      {/* Worm Selector UI - Bottom Center */}
+      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-30 flex gap-2 pointer-events-auto">
+        {worms.map(worm => {
+          const isActive = worm.id === activeWormId;
+          const isHovered = hoveredWormId === worm.id;
+
+          return (
+            <div
+              key={worm.id}
+              className="relative group"
+              onMouseEnter={() => setHoveredWormId(worm.id)}
+              onMouseLeave={() => setHoveredWormId(null)}
+            >
+              {/* Popover Menu */}
+              {(isHovered || (isActive && hoveredWormId === worm.id)) && (
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-3 w-[220px] bg-black/90 backdrop-blur-xl border border-white/20 rounded-xl p-3 shadow-2xl z-50 flex flex-col gap-4 animate-in fade-in slide-in-from-bottom-2 duration-200">
+
+                  {/* Mood Section */}
+                  <div>
+                    <div className="text-[10px] text-white/40 uppercase tracking-wider mb-2 font-bold">Mood</div>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {['Serene', 'Watchful', 'Playful', 'Wistful', 'Irritable', 'Electric'].map(m => (
+                        <button
+                          key={m}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleMoodInfluence(m, worm.id);
+                          }}
+                          className="px-2 py-1.5 bg-white/5 border border-white/10 rounded text-[10px] text-white/70 hover:bg-white/20 hover:text-blue-300 transition-colors text-center"
+                        >
+                          {m}
+                        </button>
+                      ))}
                     </div>
-                    <div className="mt-1 flex gap-1">
-                      <div className="w-12 h-1 bg-black/40 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-yellow-500"
-                          style={{ width: `${worm.satiation}%` }}
+                  </div>
+
+                  {/* Shape Section (Global) */}
+                  <div>
+                    <div className="text-[10px] text-white/40 uppercase tracking-wider mb-2 font-bold flex justify-between">
+                      <span>Shape</span>
+                      <span className="text-[9px] opacity-50">(Global)</span>
+                    </div>
+                    <div className="space-y-3">
+                      <div>
+                        <label className="text-[9px] text-white/60 block mb-1">Core Size</label>
+                        <input
+                          type="range"
+                          min="50" max="300" step="5"
+                          value={params.coreRadius}
+                          onChange={(e) => setParams(p => ({ ...p, coreRadius: Number(e.target.value) }))}
+                          className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer hover:bg-white/20"
                         />
                       </div>
-                      <div className="w-12 h-1 bg-black/40 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-red-500"
-                          style={{ width: `${worm.health}%` }}
+                      <div>
+                        <label className="text-[9px] text-white/60 block mb-1">Hip Size</label>
+                        <input
+                          type="range"
+                          min="30" max="150" step="5"
+                          value={params.hipRadius}
+                          onChange={(e) => setParams(p => ({ ...p, hipRadius: Number(e.target.value) }))}
+                          className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer hover:bg-white/20"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9px] text-white/60 block mb-1">Foot Size</label>
+                        <input
+                          type="range"
+                          min="10" max="150" step="2"
+                          value={params.footRadius}
+                          onChange={(e) => setParams(p => ({ ...p, footRadius: Number(e.target.value) }))}
+                          className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer hover:bg-white/20"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9px] text-white/60 block mb-1">Thickness</label>
+                        <input
+                          type="range"
+                          min="0.05" max="0.9" step="0.01"
+                          value={params.isoThreshold}
+                          onChange={(e) => setParams(p => ({ ...p, isoThreshold: Number(e.target.value) }))}
+                          className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer hover:bg-white/20"
                         />
                       </div>
                     </div>
-                  </button>
-                );
-              })}
+                  </div>
+
+                  {/* Physics Section (Global) */}
+                  <div>
+                    <div className="text-[10px] text-white/40 uppercase tracking-wider mb-2 font-bold flex justify-between">
+                      <span>Physics</span>
+                      <span className="text-[9px] opacity-50">(Global)</span>
+                    </div>
+                    <div className="space-y-3">
+                      <div>
+                        <label className="text-[9px] text-white/60 block mb-1">Speed</label>
+                        <input
+                          type="range"
+                          min="1" max="100" step="1"
+                          value={Math.round(params.coreLerp * 1000)}
+                          onChange={(e) => setParams(p => ({ ...p, coreLerp: Number(e.target.value) / 1000 }))}
+                          className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer hover:bg-white/20"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9px] text-white/60 block mb-1">Foot Grip</label>
+                        <input
+                          type="range"
+                          min="0.05" max="2.0" step="0.05"
+                          value={params.footWeight}
+                          onChange={(e) => setParams(p => ({ ...p, footWeight: Number(e.target.value) }))}
+                          className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer hover:bg-white/20"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9px] text-white/60 block mb-1">Res (Cell Size)</label>
+                        <input
+                          type="range"
+                          min="4" max="30" step="1"
+                          value={params.cellSize}
+                          onChange={(e) => setParams(p => ({ ...p, cellSize: Number(e.target.value) }))}
+                          className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer hover:bg-white/20"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Arrow */}
+                  <div className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-black/90 border-r border-b border-white/20 rotate-45 transform"></div>
+                </div>
+              )}
+
+              <button
+                onClick={() => switchWorm(worm.id)}
+                className={`relative z-10 px-3 py-2 rounded-md transition-all duration-200 ${isActive
+                  ? 'bg-white/20 border-2'
+                  : 'bg-black/60 border border-white/10 hover:bg-white/10'
+                  }`}
+                style={{
+                  borderColor: isActive ? `hsl(${worm.hue}, 50%, 50%)` : undefined,
+                }}
+              >
+                <div className="flex items-center gap-2">
+                  <div
+                    className="w-3 h-3 rounded-full shadow-[0_0_8px_rgba(255,255,255,0.3)]"
+                    style={{ backgroundColor: `hsl(${worm.hue}, 60%, 55%)` }}
+                  />
+                  <div className="flex flex-col items-start">
+                    <span className={`text-[10px] font-mono leading-none ${isActive ? 'text-white' : 'text-white/70'}`}>
+                      {worm.name || `Worm ${worm.generation + 1}`}
+                    </span>
+                    <span className="text-[9px] text-white/40 leading-none mt-0.5">
+                      {worm.vocabulary.size} words
+                    </span>
+                  </div>
+                </div>
+
+                {/* Stats Bars */}
+                <div className="mt-2 flex gap-1 w-full opacity-80">
+                  <div className="h-1 flex-1 bg-white/10 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-amber-400"
+                      style={{ width: `${worm.satiation}%` }}
+                    />
+                  </div>
+                  <div className="h-1 flex-1 bg-white/10 rounded-full overflow-hidden relative">
+                    <div
+                      className="h-full bg-rose-500 absolute left-0 top-0"
+                      style={{ width: `${worm.health}%` }}
+                    />
+                  </div>
+                </div>
+              </button>
             </div>
-          </div>
-        </div>
-      )
-      }
+          );
+        })}
+      </div>
 
       <div className={`absolute top-0 left-0 h-full z-20 transition-transform duration-300 ease-in-out ${isLeftOpen ? 'translate-x-0' : '-translate-x-[260px]'}`}>
         <button
@@ -465,89 +588,9 @@ const App: React.FC = () => {
             />
           </ControlGroup>
 
-          <ControlGroup title="Mood Influence">
-            <div className="grid grid-cols-2 gap-2">
-              {['Serene', 'Watchful', 'Playful', 'Wistful', 'Irritable', 'Electric'].map(m => (
-                <button
-                  key={m}
-                  onClick={() => handleMoodInfluence(m)}
-                  className="px-2 py-1 bg-white/5 border border-white/10 rounded text-[10px] text-white/60 hover:bg-white/10 hover:text-blue-400 transition-colors"
-                >
-                  {m}
-                </button>
-              ))}
-            </div>
-          </ControlGroup>
 
-          <ControlGroup title="Visibility">
-            <Toggle
-              label="Show Skeleton"
-              value={params.showSkeleton}
-              onChange={(v: boolean) => setParams(p => ({ ...p, showSkeleton: v }))}
-            />
-          </ControlGroup>
 
-          <ControlGroup title="Locomotion & IK">
-            <Slider
-              label="Upper Leg (L1)"
-              value={params.l1} min={20} max={100} step={1}
-              onChange={(v: number) => setParams(p => ({ ...p, l1: v }))}
-            />
-            <Slider
-              label="Lower Leg (L2)"
-              value={params.l2} min={20} max={100} step={1}
-              onChange={(v: number) => setParams(p => ({ ...p, l2: v }))}
-            />
-            <Slider
-              label="Step Trigger"
-              value={params.stepTrigger} min={30} max={150} step={5}
-              onChange={(v: number) => setParams(p => ({ ...p, stepTrigger: v }))}
-            />
-          </ControlGroup>
 
-          <ControlGroup title="Metaball Radius">
-            <Slider
-              label="Core Radius"
-              value={params.coreRadius} min={50} max={300} step={5}
-              onChange={(v: number) => setParams(p => ({ ...p, coreRadius: v }))}
-            />
-            <Slider
-              label="Hip Radius"
-              value={params.hipRadius} min={30} max={150} step={5}
-              onChange={(v: number) => setParams(p => ({ ...p, hipRadius: v }))}
-            />
-            <Slider
-              label="Foot Radius"
-              value={params.footRadius} min={10} max={150} step={2}
-              onChange={(v: number) => setParams(p => ({ ...p, footRadius: v }))}
-            />
-          </ControlGroup>
-
-          <ControlGroup title="Field Weights">
-            <Slider
-              label="Movement Speed"
-              value={Math.round(params.coreLerp * 1000)} min={1} max={100} step={1}
-              onChange={(v: number) => setParams(p => ({ ...p, coreLerp: v / 1000 }))}
-            />
-            <Slider
-              label="Skin Thickness (ISO)"
-              value={params.isoThreshold} min={0.05} max={0.9} step={0.01}
-              onChange={(v: number) => setParams(p => ({ ...p, isoThreshold: v }))}
-            />
-            <Slider
-              label="Foot Strength"
-              value={params.footWeight} min={0.05} max={2.0} step={0.05}
-              onChange={(v: number) => setParams(p => ({ ...p, footWeight: v }))}
-            />
-          </ControlGroup>
-
-          <ControlGroup title="Resolution">
-            <Slider
-              label="Cell Size"
-              value={params.cellSize} min={4} max={30} step={1}
-              onChange={(v: number) => setParams(p => ({ ...p, cellSize: v }))}
-            />
-          </ControlGroup>
         </div>
       </div>
 
