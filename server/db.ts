@@ -1,7 +1,20 @@
 import Database from 'better-sqlite3';
 import path from 'path';
+import fs from 'fs';
 
 const dbPath = path.resolve(__dirname, 'glutton.db');
+const snapshotPath = path.resolve(__dirname, 'glutton.snapshot.db');
+
+// Initialize DB from snapshot if needed
+if (!fs.existsSync(dbPath)) {
+  if (fs.existsSync(snapshotPath)) {
+    console.log('Creating fresh glutton.db from snapshot...');
+    fs.copyFileSync(snapshotPath, dbPath);
+  } else {
+    console.log('No snapshot found, creating clean glutton.db...');
+  }
+}
+
 const db = new Database(dbPath);
 
 // Initialize Tables
