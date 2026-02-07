@@ -177,9 +177,6 @@ const App: React.FC = () => {
     try {
       await fetch('/api/stomach', { method: 'DELETE' });
       setSwallowedWords([]);
-      if (engineRef.current) {
-        engineRef.current.events.emit(EVENTS.STOMACH_CLEAR, {});
-      }
     } catch (e) {
       console.error("Clear failed", e);
     }
@@ -197,6 +194,47 @@ const App: React.FC = () => {
       placement: isStormMode ? 'viewport' : 'anchor',
       headline
     });
+  };
+
+  const handleMoodInfluence = (mood: string) => {
+    if (!engineRef.current) return;
+
+    const activeWormId = engineRef.current.wormState.activeWormId;
+    console.log('Influencing mood:', mood, 'for worm:', activeWormId);
+
+    let axes: any = {};
+
+    // Based on DigestionSystem.regenerateIdentity logic
+    // We must set conflicting axes to values that suppress other moods
+    switch (mood) {
+      case 'Serene':
+        // calm + hopeful + tender. Suppress bold/irritability.
+        axes = { calm: 0.9, hopeful: 0.7, tender: 0.8, bold: -0.8, social: 0, focused: 0 };
+        break;
+      case 'Watchful':
+        // focused + curious - social. Suppress orderly to avoid Analytical.
+        axes = { focused: 0.9, curious: 0.7, social: -0.8, calm: 0.2, bold: -0.2, orderly: 0, poetic: 0 };
+        break;
+      case 'Playful':
+        // bold + curious - orderly. Suppress social to avoid Electric.
+        axes = { bold: 0.8, curious: 0.8, orderly: -0.9, social: -0.4, calm: -0.2, tender: 0.4 };
+        break;
+      case 'Wistful':
+        // -hopeful + poetic. Suppress focused to avoid Contemplative.
+        axes = { hopeful: -0.9, poetic: 0.9, calm: 0.3, bold: -0.5, focused: -0.4, social: -0.2 };
+        break;
+      case 'Irritable':
+        // -tender - calm. Suppress curious.
+        axes = { tender: -0.9, calm: -0.9, bold: 0.6, social: -0.6, hopeful: -0.3, curious: 0 };
+        break;
+      case 'Electric':
+        // bold + curious + social. Suppress orderly to hurt Playful (but wait, Playful needs LOW orderly). 
+        // Also boost Social to max.
+        axes = { bold: 0.9, curious: 0.8, social: 0.9, orderly: 0.4, calm: -0.8, poetic: -0.5, tender: -0.2 };
+        break;
+    }
+
+    engineRef.current.events.emit(EVENTS.FORCE_MOOD, { wormId: activeWormId, axes });
   };
 
   return (
@@ -231,8 +269,8 @@ const App: React.FC = () => {
                     key={worm.id}
                     onClick={() => switchWorm(worm.id)}
                     className={`px-3 py-2 rounded-md transition-all duration-200 ${isActive
-                        ? 'bg-white/20 border-2'
-                        : 'bg-black/60 border border-white/10 hover:bg-white/10'
+                      ? 'bg-white/20 border-2'
+                      : 'bg-black/60 border border-white/10 hover:bg-white/10'
                       }`}
                     style={{
                       borderColor: isActive ? `hsl(${worm.hue}, 50%, 50%)` : undefined,
@@ -270,7 +308,8 @@ const App: React.FC = () => {
             </div>
           </div>
         </div>
-      )}
+      )
+      }
 
       <div className={`absolute top-0 left-0 h-full z-20 transition-transform duration-300 ease-in-out ${isLeftOpen ? 'translate-x-0' : '-translate-x-[260px]'}`}>
         <button
@@ -317,13 +356,15 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      {!isLeftOpen && (
-        <div className="absolute left-6 top-1/2 -translate-y-28 -rotate-90 origin-left z-30 pointer-events-none">
-          <div className="text-[10px] text-white/30 font-mono-custom tracking-[0.3em] whitespace-nowrap uppercase">
-            STOMACH: {swallowedWords.length}
+      {
+        !isLeftOpen && (
+          <div className="absolute left-6 top-1/2 -translate-y-28 -rotate-90 origin-left z-30 pointer-events-none">
+            <div className="text-[10px] text-white/30 font-mono-custom tracking-[0.3em] whitespace-nowrap uppercase">
+              STOMACH: {swallowedWords.length}
+            </div>
           </div>
-        </div>
-      )}
+        )
+      }
 
       <div className={`absolute top-0 right-0 h-full z-20 transition-transform duration-300 ease-in-out ${isRightOpen ? 'translate-x-0' : 'translate-x-[280px]'}`}>
         <button
@@ -424,6 +465,20 @@ const App: React.FC = () => {
             />
           </ControlGroup>
 
+          <ControlGroup title="Mood Influence">
+            <div className="grid grid-cols-2 gap-2">
+              {['Serene', 'Watchful', 'Playful', 'Wistful', 'Irritable', 'Electric'].map(m => (
+                <button
+                  key={m}
+                  onClick={() => handleMoodInfluence(m)}
+                  className="px-2 py-1 bg-white/5 border border-white/10 rounded text-[10px] text-white/60 hover:bg-white/10 hover:text-blue-400 transition-colors"
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
+          </ControlGroup>
+
           <ControlGroup title="Visibility">
             <Toggle
               label="Show Skeleton"
@@ -497,21 +552,23 @@ const App: React.FC = () => {
       </div>
 
       {/* Reproduction Freeze Overlay */}
-      {isReproducing && (
-        <div className="absolute inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center pointer-events-auto">
-          <div className="text-center">
-            <div className="text-white text-xl font-mono-custom mb-4 animate-pulse">
-              splitting...
-            </div>
-            <div className="flex gap-2 justify-center">
-              <div className="w-3 h-3 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0s' }}></div>
-              <div className="w-3 h-3 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
-              <div className="w-3 h-3 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.4s' }}></div>
+      {
+        isReproducing && (
+          <div className="absolute inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center pointer-events-auto">
+            <div className="text-center">
+              <div className="text-white text-xl font-mono-custom mb-4 animate-pulse">
+                splitting...
+              </div>
+              <div className="flex gap-2 justify-center">
+                <div className="w-3 h-3 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0s' }}></div>
+                <div className="w-3 h-3 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                <div className="w-3 h-3 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.4s' }}></div>
+              </div>
             </div>
           </div>
-        </div>
-      )}
-    </div>
+        )
+      }
+    </div >
   );
 };
 

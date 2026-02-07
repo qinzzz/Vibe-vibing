@@ -204,20 +204,30 @@ export class PhysicsSystem implements System {
         const x = core.x + Math.cos(angle) * r;
         const y = core.y + Math.sin(angle) * r;
 
+        // Calculate worm's actual color
+        const baseHue = worm.hue;
+        const soulHue = this.getSoulHueOffset(worm.soul?.axes);
+        const finalHue = (baseHue + soulHue + 360) % 360;
+
+        // Use worm's color with high lightness for particles
+        const particleColor = `hsla(${finalHue}, 80%, 75%, 0.8)`;
+
         if (axes.bold > 0.4) {
-            this.addParticle(worm, x, y, 'spark', '#FFD700'); // Gold sparks
+            this.addParticle(worm, x, y, 'spark', particleColor);
         }
         if (axes.calm > 0.4) {
-            this.addParticle(worm, x, y, 'bubble', '#87CEFA'); // Sky blue bubbles
+            this.addParticle(worm, x, y, 'bubble', particleColor);
         }
         if (axes.tender > 0.4) {
-            this.addParticle(worm, x, y, 'heart', '#FF69B4'); // Pink hearts
+            this.addParticle(worm, x, y, 'heart', particleColor);
         }
         if (axes.hopeful < -0.4 || axes.calm < -0.4) {
-            this.addParticle(worm, x, y, 'dust', '#808080'); // Gray dust
+            // Dust stays gray-ish but tinted
+            const dustColor = `hsla(${finalHue}, 20%, 60%, 0.6)`;
+            this.addParticle(worm, x, y, 'dust', dustColor);
         }
         if (axes.poetic > 0.5) {
-            this.addParticle(worm, x, y, 'fizz', '#E6E6FA'); // Lavender fizz
+            this.addParticle(worm, x, y, 'fizz', particleColor);
         }
     }
 

@@ -60,6 +60,7 @@ export class DigestionSystem implements System {
         this.engine.events.on(EVENTS.WORD_REMOVED, this.handleWordRemoved);
         this.engine.events.on(EVENTS.READY_TO_REPRODUCE, this.handleReproductionReady);
         this.engine.events.on(EVENTS.REPRODUCE_TRIGGERED, this.handleReproduceTrigger);
+        this.engine.events.on(EVENTS.FORCE_MOOD, this.handleForceMood);
         this.engine.events.on('INPUT_START', this.handleInput);
 
         this.hydrateStomach(3); // Start hydration with retries
@@ -109,6 +110,24 @@ export class DigestionSystem implements System {
                 timer: 120
             };
             this.reproduceWorm();
+        }
+    };
+
+    private handleForceMood = (data: { wormId: string, axes: any }) => {
+        const worm = this.engine.wormState.worms.get(data.wormId);
+        if (!worm) return;
+
+        console.log(`[DEBUG] Forcing mood for ${worm.id}`, data.axes);
+
+        // Merge new axes
+        worm.soul.axes = { ...worm.soul.axes, ...data.axes };
+
+        // Regenerate identity immediately
+        this.regenerateIdentity(worm, true);
+
+        // Force vocab update to refreshing UI if needed (though identity is main thing)
+        if (worm.id === this.engine.wormState.activeWormId) {
+            this.engine.events.emit(EVENTS.VOCAB_UPDATED, Array.from(worm.vocabulary));
         }
     };
 
@@ -880,6 +899,7 @@ export class DigestionSystem implements System {
         ctx.font = "10px 'Space Mono'";
         const w2 = ctx.measureText(sub).width;
         const w3 = ctx.measureText(line3).width;
+
         const width = Math.max(w1, w2, w3) + 24;
         const height = 62;
 
@@ -925,7 +945,8 @@ export class DigestionSystem implements System {
     draw(ctx: CanvasRenderingContext2D) {
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
 
-        // Draw settled words inside ALL worms
+        // Re-enabled shortened card
+        this.drawSoulHoverCard(ctx);
         this.engine.wormState.worms.forEach(worm => {
             worm.swallowedWords.forEach(word => {
                 word.letters.forEach(letter => {
