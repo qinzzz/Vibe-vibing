@@ -121,7 +121,6 @@ export interface SoulAxes {
 
 export interface SoulIdentity {
     mood: string;
-    temperament: string;
     preferences: string[];
     aversions: string[];
     fears: string[];
@@ -144,6 +143,7 @@ export interface Worm {
     birthTime: number;
     hue: number;
     sizeMultiplier: number;
+    thickness: number; // Added for visual evolution
     speedMultiplier: number;
     satiation: number;
     health: number;

@@ -257,7 +257,7 @@ const App: React.FC = () => {
       />
 
       {/* Worm Selector UI - Bottom Center */}
-      {/* Worm Selector UI - Bottom Center */}
+
       <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-30 flex gap-2 pointer-events-auto">
         {worms.map(worm => {
           const isActive = worm.id === activeWormId;
@@ -289,6 +289,35 @@ const App: React.FC = () => {
                         >
                           {m}
                         </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Soul Section */}
+                  <div>
+                    <div className="text-[10px] text-white/40 uppercase tracking-wider mb-2 font-bold flex justify-between">
+                      <span>Soul</span>
+                      <span className="text-[9px] opacity-50">(Personality)</span>
+                    </div>
+                    <div className="space-y-1.5 max-h-[120px] overflow-y-auto custom-scrollbar pr-1">
+                      {Object.entries(worm.soul?.axes || {}).map(([key, value]) => (
+                        <div key={key} className="flex items-center justify-between text-[9px] text-white/60">
+                          <span className="capitalize w-16">{key}</span>
+                          <div className="flex-1 h-1.5 bg-white/10 rounded-full mx-2 relative">
+                            {/* Center line */}
+                            <div className="absolute left-1/2 top-0 bottom-0 w-[1px] bg-white/20"></div>
+                            {/* Bar */}
+                            <div
+                              className={`h-full rounded-full transition-all duration-300 ${Number(value) > 0 ? 'bg-blue-400' : 'bg-amber-400'}`}
+                              style={{
+                                width: `${Math.min(50, Math.abs(Number(value)) * 50)}%`,
+                                left: Number(value) > 0 ? '50%' : undefined,
+                                right: Number(value) <= 0 ? '50%' : undefined
+                              }}
+                            />
+                          </div>
+                          <span className="w-6 text-right font-mono">{(Number(value)).toFixed(1)}</span>
+                        </div>
                       ))}
                     </div>
                   </div>
@@ -403,12 +432,12 @@ const App: React.FC = () => {
                     className="w-3 h-3 rounded-full shadow-[0_0_8px_rgba(255,255,255,0.3)]"
                     style={{ backgroundColor: `hsl(${worm.hue}, 60%, 55%)` }}
                   />
-                  <div className="flex flex-col items-start">
-                    <span className={`text-[10px] font-mono leading-none ${isActive ? 'text-white' : 'text-white/70'}`}>
+                  <div className="flex flex-col items-start min-w-[80px]">
+                    <span className={`text-[12px] font-bold font-mono leading-none mb-1 ${isActive ? 'text-white' : 'text-white/70'}`}>
                       {worm.name || `Worm ${worm.generation + 1}`}
                     </span>
-                    <span className="text-[9px] text-white/40 leading-none mt-0.5">
-                      {worm.vocabulary.size} words
+                    <span className="text-[10px] text-blue-300 font-medium uppercase tracking-wider leading-none">
+                      {worm.soul?.identity?.mood || 'Waking...'}
                     </span>
                   </div>
                 </div>

@@ -202,7 +202,8 @@ export class Engine {
 
             // Inherit with mutations
             hue: parent ? (parent.hue + (Math.random() - 0.5) * 30) % 360 : 200, // Start blue
-            sizeMultiplier: parent ? parent.sizeMultiplier * (0.95 + Math.random() * 0.1) : 1.0,
+            sizeMultiplier: parent ? this.clamp(parent.sizeMultiplier * (0.95 + Math.random() * 0.1), 0.6, 1.8) : 1.0,
+            thickness: parent ? this.clamp(parent.thickness * (0.95 + Math.random() * 0.1), 0.15, 0.5) : 0.25,
             speedMultiplier: parent ? parent.speedMultiplier * (0.95 + Math.random() * 0.1) : 1.0,
 
             // Lifecycle

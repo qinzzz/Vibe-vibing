@@ -39,18 +39,7 @@ export class DigestionSystem implements System {
         'electric',
         'mellow'
     ];
-    private readonly TEMPERAMENTS = [
-        'gentle',
-        'stoic',
-        'mischievous',
-        'analytical',
-        'romantic',
-        'skeptical',
-        'wandering',
-        'disciplined',
-        'absurdist',
-        'reverent'
-    ];
+
 
     init(engine: Engine) {
         this.engine = engine;
@@ -117,18 +106,10 @@ export class DigestionSystem implements System {
         const worm = this.engine.wormState.worms.get(data.wormId);
         if (!worm) return;
 
-        console.log(`[DEBUG] Forcing mood for ${worm.id}`, data.axes);
+        console.log(`[DEBUG] Forcing mood target for ${worm.id}`, data.axes);
 
-        // Merge new axes
-        worm.soul.axes = { ...worm.soul.axes, ...data.axes };
-
-        // Regenerate identity immediately
-        this.regenerateIdentity(worm, true);
-
-        // Force vocab update to refreshing UI if needed (though identity is main thing)
-        if (worm.id === this.engine.wormState.activeWormId) {
-            this.engine.events.emit(EVENTS.VOCAB_UPDATED, Array.from(worm.vocabulary));
-        }
+        // Set target axes for gradual transition
+        worm.soul.targetAxes = { ...worm.soul.axes, ...data.axes };
     };
 
     private handleWordRemoved = (id: string) => {
@@ -178,6 +159,7 @@ export class DigestionSystem implements System {
                         worm.name = dbWorm.name;
                         worm.hue = dbWorm.hue;
                         worm.sizeMultiplier = dbWorm.size_multiplier;
+                        worm.thickness = dbWorm.thickness || 0.25; // Fallback for old DBs
                         worm.speedMultiplier = dbWorm.speed_multiplier;
                         worm.birthTime = dbWorm.birth_time;
                         worm.satiation = dbWorm.satiation;
@@ -203,18 +185,18 @@ export class DigestionSystem implements System {
                     // Restore words to their respective worms
                     if (data.words) {
                         data.words.forEach((item: { id: string, worm_id: string, text: string }) => {
-                            const worm = this.engine.wormState.worms.get(item.worm_id);
-                            if (!worm) return;
+                            const activeWorm = this.engine.wormState.worms.get(item.worm_id);
+                            if (!activeWorm) return;
 
                             const word = item.text;
-                            worm.vocabulary.add(word);
+                            activeWorm.vocabulary.add(word);
 
                             const target = (['core', 'FL', 'FR', 'BL', 'BR'] as const)[Math.floor(Math.random() * 5)];
                             const charWidth = 12;
-                            worm.swallowedWords.push({
+                            activeWorm.swallowedWords.push({
                                 id: item.id,
                                 text: word,
-                                pos: { ...worm.corePos },
+                                pos: { ...activeWorm.corePos },
                                 rotation: (Math.random() - 0.5) * 0.6,
                                 targetAnchor: target,
                                 layoutOffset: { x: (Math.random() - 0.5) * 20, y: (Math.random() - 0.5) * 20 },
@@ -222,7 +204,7 @@ export class DigestionSystem implements System {
                                 letters: word.split('').map((char, i) => ({
                                     id: Math.random().toString(),
                                     char,
-                                    pos: { ...worm.corePos },
+                                    pos: { ...activeWorm.corePos },
                                     targetOffset: {
                                         x: ((i * charWidth) - (word.length * charWidth) / 2),
                                         y: 0
@@ -275,6 +257,7 @@ export class DigestionSystem implements System {
                 parentId: worm.parentId,
                 hue: worm.hue,
                 sizeMultiplier: worm.sizeMultiplier,
+                thickness: worm.thickness,
                 speedMultiplier: worm.speedMultiplier,
                 birthTime: worm.birthTime,
                 satiation: worm.satiation,
@@ -309,6 +292,7 @@ export class DigestionSystem implements System {
 
         this.engine.wormState.worms.forEach(w => {
             this.ensureSoulState(w as any);
+            this.updateSoulAxes(w as any, dtSec);
             this.updateDigestionStages(w as any, dtSec);
         });
 
@@ -658,7 +642,6 @@ export class DigestionSystem implements System {
             },
             identity: {
                 mood: 'watchful',
-                temperament: 'wandering',
                 preferences: ['mystery', 'questions'],
                 aversions: ['noise'],
                 fears: ['being forgotten'],
@@ -767,6 +750,39 @@ export class DigestionSystem implements System {
             // More loose clamping to allow faster shifts, but still bounded
             axes[key] = this.clamp(current + sums[key], -1, 1);
         }
+
+        // --- Dynamic Visuals: Size & Thickness ---
+
+        // 1. Growth: Simply eating makes you bigger. +0.015 per word (was 0.002) -> 10 words = +0.15 size!
+        // Bonus growth for BOLD or SOCIAL words (taking up space).
+        let growth = 0.015;
+        if (sums.bold > 0) growth += 0.01;
+        if (sums.social > 0) growth += 0.01;
+
+        worm.sizeMultiplier = this.clamp((worm.sizeMultiplier || 1.0) + growth, 0.6, 3.5); // Cap raised to 3.5
+
+        // 2. Thickness: Skin thickness / IsoThreshold
+        // Stubborn/Orderly/Focused -> Thicker skin (Harder to penetrate, more defined)
+        // Tender/Sensitive/Poetic -> Thinner skin (More fluid, blobby)
+        let thicknessChange = 0;
+        if (sums.stubborn > 0) thicknessChange += 0.03;
+        if (sums.orderly > 0) thicknessChange += 0.015;
+        if (sums.focused > 0) thicknessChange += 0.015;
+
+        if (sums.tender > 0) thicknessChange -= 0.03;
+        if (sums.poetic > 0) thicknessChange -= 0.015;
+        if (sums.hopeful > 0) thicknessChange -= 0.015;
+
+        // Initialize thickness if missing
+        if (typeof worm.thickness !== 'number') worm.thickness = 0.25;
+
+        worm.thickness = this.clamp(worm.thickness + thicknessChange, 0.1, 0.8);
+
+        console.log(`[DIGEST] ${tokens[0]}... -> Size: ${worm.sizeMultiplier.toFixed(3)}, Thick: ${worm.thickness.toFixed(3)}`);
+
+        // Save visual changes
+        this.saveWormState(worm).catch(e => console.error("Failed to save visual update", e));
+
         this.regenerateIdentity(worm, false);
     }
 
@@ -787,24 +803,8 @@ export class DigestionSystem implements System {
         moodScores.sort((a, b) => b.score - a.score);
         const mood = moodScores[0]?.label || this.MOODS[0];
 
-        const temperamentScores = [
-            { label: 'gentle', score: axes.tender + axes.calm },
-            { label: 'stoic', score: axes.orderly + axes.focused - axes.social * 0.2 },
-            { label: 'mischievous', score: axes.bold - axes.orderly + axes.curious * 0.3 },
-            { label: 'analytical', score: axes.focused + axes.curious + axes.orderly * 0.2 },
-            { label: 'romantic', score: axes.poetic + axes.tender },
-            { label: 'skeptical', score: -axes.hopeful + axes.focused * 0.3 },
-            { label: 'wandering', score: axes.curious - axes.orderly * 0.2 },
-            { label: 'disciplined', score: axes.orderly + axes.focused + axes.stubborn * 0.2 },
-            { label: 'absurdist', score: -axes.orderly + axes.poetic * 0.6 + axes.bold * 0.2 },
-            { label: 'reverent', score: axes.tender + axes.orderly * 0.2 + axes.hopeful * 0.3 }
-        ];
-        temperamentScores.sort((a, b) => b.score - a.score);
-        const temperament = temperamentScores[0]?.label || this.TEMPERAMENTS[0];
-
         worm.soul.identity = {
             mood,
-            temperament,
             preferences: [
                 axes.curious >= 0 ? 'novelty' : 'certainty',
                 axes.poetic >= 0 ? 'beauty' : 'clarity',
@@ -883,10 +883,10 @@ export class DigestionSystem implements System {
             : 0;
 
         const label = (worm.name || worm.id || 'worm').toUpperCase();
-        const title = `${label}  ${mood.toUpperCase()}`;
+        const title = `${label}`;
         const sub = digesting > 0
-            ? `${temperament}  |  digesting ${digesting}`
-            : `${temperament}`;
+            ? `${mood.toUpperCase()}  |  digesting ${digesting}`
+            : `${mood.toUpperCase()}`;
         const line3 = `"${motto}"`;
 
         ctx.save();
@@ -1004,6 +1004,27 @@ export class DigestionSystem implements System {
         }
 
         this.drawSoulHoverCard(ctx);
+    }
+
+    private updateSoulAxes(worm: any, dtSec: number) {
+        if (!worm.soul.targetAxes) return;
+
+        let changed = false;
+        const lerpRate = dtSec * 1.5; // Gradual shift speed
+
+        for (const key of this.AXIS_KEYS) {
+            const current = worm.soul.axes[key] || 0;
+            const target = worm.soul.targetAxes[key];
+
+            if (target !== undefined && Math.abs(current - target) > 0.001) {
+                worm.soul.axes[key] += (target - current) * lerpRate;
+                changed = true;
+            }
+        }
+
+        if (changed) {
+            this.regenerateIdentity(worm, true);
+        }
     }
 
     cleanup() {

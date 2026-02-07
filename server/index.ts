@@ -462,6 +462,7 @@ app.post('/api/worms', (req, res) => {
             parentId: worm.parentId,
             hue: worm.hue,
             sizeMultiplier: worm.sizeMultiplier,
+            thickness: worm.thickness ?? 0.25,
             speedMultiplier: worm.speedMultiplier,
             birthTime: worm.birthTime,
             satiation: worm.satiation,

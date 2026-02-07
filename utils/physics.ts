@@ -2,6 +2,12 @@ import { Vector2D } from '../types';
 
 export const lerp = (v0: number, v1: number, t: number) => v0 + t * (v1 - v0);
 
+export const lerpAngle = (start: number, end: number, t: number) => {
+    const diff = end - start;
+    const delta = ((diff + 180) % 360) - 180; // Wrap to [-180, 180]
+    return (start + delta * t + 360) % 360; // Keep within [0, 360]
+};
+
 export const solveIK = (origin: Vector2D, target: Vector2D, l1: number, l2: number, isRight: boolean): Vector2D => {
     const dx = target.x - origin.x;
     const dy = target.y - origin.y;

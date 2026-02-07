@@ -26,6 +26,7 @@ db.exec(`
     parent_id TEXT,
     hue INTEGER NOT NULL,
     size_multiplier REAL NOT NULL,
+    thickness REAL DEFAULT 0.25,
     speed_multiplier REAL NOT NULL,
     birth_time INTEGER NOT NULL,
     satiation REAL NOT NULL,
@@ -49,6 +50,17 @@ db.exec(`
   );
 `);
 
+// Auto-Migration: Add thickness column if missing (for existing DBs)
+try {
+  const tableInfo = db.pragma('table_info(worms)') as Array<{ name: string }>;
+  if (!tableInfo.some(col => col.name === 'thickness')) {
+    console.log('[DB] Migrating: Adding thickness column to worms table...');
+    db.exec('ALTER TABLE worms ADD COLUMN thickness REAL DEFAULT 0.25');
+  }
+} catch (err) {
+  console.error('[DB] Migration check failed:', err);
+}
+
 // Worm Management
 export const saveWorm = (worm: {
   id: string;
@@ -57,6 +69,7 @@ export const saveWorm = (worm: {
   parentId: string | null;
   hue: number;
   sizeMultiplier: number;
+  thickness: number;
   speedMultiplier: number;
   birthTime: number;
   satiation: number;
@@ -65,8 +78,8 @@ export const saveWorm = (worm: {
 }) => {
   const stmt = db.prepare(`
     INSERT OR REPLACE INTO worms
-    (id, name, generation, parent_id, hue, size_multiplier, speed_multiplier, birth_time, satiation, health, last_meal)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (id, name, generation, parent_id, hue, size_multiplier, thickness, speed_multiplier, birth_time, satiation, health, last_meal)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   stmt.run(
     worm.id,
@@ -75,6 +88,7 @@ export const saveWorm = (worm: {
     worm.parentId,
     worm.hue,
     worm.sizeMultiplier,
+    worm.thickness,
     worm.speedMultiplier,
     worm.birthTime,
     worm.satiation,
@@ -92,6 +106,7 @@ export const getWorms = () => {
     parent_id: string | null;
     hue: number;
     size_multiplier: number;
+    thickness: number;
     speed_multiplier: number;
     birth_time: number;
     satiation: number;

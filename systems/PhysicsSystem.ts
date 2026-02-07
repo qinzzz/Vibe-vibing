@@ -1,7 +1,7 @@
 import { System, Worm, SoulParticle } from '../core/types';
 import { Engine } from '../core/Engine';
 import { BLOB_CONSTANTS } from '../constants';
-import { solveIK, lerp } from '../utils/physics';
+import { solveIK, lerp, lerpAngle } from '../utils/physics';
 import { computeField } from '../utils/marchingSquares';
 import { Vector2D } from '../core/types';
 import { EVENTS } from '../core/events';
@@ -75,8 +75,8 @@ export class PhysicsSystem implements System {
 
         // Soul-based movement modifiers
         const axes = worm.soul?.axes || { calm: 0, bold: 0, focused: 0 };
-        const jitter = (axes.bold * 0.5 - axes.calm * 0.3) * 2; // Bold worms jitter more
-        const smooth = Math.max(0, axes.calm * 0.5 + axes.focused * 0.3); // Calm worms move smoother
+        const jitter = (axes.bold * 0.8 - axes.calm * 0.4) * 3; // Bold worms jitter MUCH more
+        const smooth = Math.max(0, axes.calm * 0.8 + axes.focused * 0.4); // Calm worms move very smoothly
 
         const targetChanged = !this.lastTarget
             || Math.abs(target.x - this.lastTarget.x) > 0.001
@@ -93,10 +93,12 @@ export class PhysicsSystem implements System {
 
         // Modify wobble based on soul
         const baseWobble = this.clamp((distToTarget - 6) / 220, 0, 1);
-        const wobbleScale = baseWobble * (1 + jitter);
+        const wobbleScale = baseWobble * (1.5 + jitter); // Increased base wobble
 
-        const wobbleX = (Math.sin(time * 0.7) * 4 + Math.cos(time * 1.3) * 2) * wobbleScale;
-        const wobbleY = (Math.cos(time * 0.8) * 4 + Math.sin(time * 1.1) * 2) * wobbleScale;
+        // Higher frequency wobble for nervous/bold
+        const freq = 1 + (axes.bold * 0.5);
+        const wobbleX = (Math.sin(time * 0.7 * freq) * 6 + Math.cos(time * 1.3 * freq) * 3) * wobbleScale;
+        const wobbleY = (Math.cos(time * 0.8 * freq) * 6 + Math.sin(time * 1.1 * freq) * 3) * wobbleScale;
 
         const closeBoost = lerp(1.2, 7.2, nearFactor);
         const closeAssist = nearFactor * 0.02 * speedMultiplier;
@@ -204,13 +206,11 @@ export class PhysicsSystem implements System {
         const x = core.x + Math.cos(angle) * r;
         const y = core.y + Math.sin(angle) * r;
 
-        // Calculate worm's actual color
-        const baseHue = worm.hue;
-        const soulHue = this.getSoulHueOffset(worm.soul?.axes);
-        const finalHue = (baseHue + soulHue + 360) % 360;
+        const mood = worm.soul?.identity?.mood || 'watchful';
+        const { h, s, l } = this.getMoodColor(mood);
 
-        // Use worm's color with high lightness for particles
-        const particleColor = `hsla(${finalHue}, 80%, 75%, 0.8)`;
+        // Use mood color for particles
+        const particleColor = `hsla(${h}, ${s}%, ${l + 10}%, 0.8)`;
 
         if (axes.bold > 0.4) {
             this.addParticle(worm, x, y, 'spark', particleColor);
@@ -223,7 +223,7 @@ export class PhysicsSystem implements System {
         }
         if (axes.hopeful < -0.4 || axes.calm < -0.4) {
             // Dust stays gray-ish but tinted
-            const dustColor = `hsla(${finalHue}, 20%, 60%, 0.6)`;
+            const dustColor = `hsla(${h}, 20%, 60%, 0.6)`;
             this.addParticle(worm, x, y, 'dust', dustColor);
         }
         if (axes.poetic > 0.5) {
@@ -281,17 +281,29 @@ export class PhysicsSystem implements System {
         const core = worm.corePos;
         const legs = worm.legs;
 
-        // Soul-based color tint
-        const baseHue = worm.hue;
-        const soulHue = this.getSoulHueOffset(worm.soul?.axes);
-        const finalHue = (baseHue + soulHue + 360) % 360; // Wrap around
+        // Mood-based Color
+        const mood = worm.soul?.identity?.mood || 'watchful';
+        const { h, s: sat, l } = this.getMoodColor(mood);
 
-        const saturation = this.getSoulSaturation(worm.soul?.axes);
-        const lightness = this.getSoulLightness(worm.soul?.axes);
+        // Initialize or lerp visual color
+        if (!worm.visualColor) {
+            worm.visualColor = { h, s: sat, l };
+        } else {
+            const lerpSpeed = 0.05; // 5% per frame (~3 sec for full transition at 60fps)
+            worm.visualColor.h = lerpAngle(worm.visualColor.h, h, lerpSpeed);
+            worm.visualColor.s = lerp(worm.visualColor.s, sat, lerpSpeed);
+            worm.visualColor.l = lerp(worm.visualColor.l, l, lerpSpeed);
+        }
+
+        // Use interpolated values
+        const renderHue = worm.visualColor.h;
+        const renderSat = worm.visualColor.s;
+        const renderLight = worm.visualColor.l;
+        const finalHue = renderHue; // Alias for skeleton color
 
         // Color params
-        const outlineColor = `hsla(${finalHue}, ${saturation}%, ${Math.max(20, lightness - 20)}%, 0.6)`; // Darker outline
-        const coreColor = `hsla(${finalHue}, ${saturation}%, ${lightness}%, 0.3)`;
+        const outlineColor = `hsla(${renderHue}, ${renderSat}%, ${Math.max(20, renderLight - 20)}%, 0.6)`; // Darker outline
+        const coreColor = `hsla(${renderHue}, ${renderSat}%, ${renderLight}%, 0.4)`;
 
         const coreRadius = s.coreRadius * worm.sizeMultiplier;
         const hipRadius = s.hipRadius * worm.sizeMultiplier;
@@ -336,7 +348,7 @@ export class PhysicsSystem implements System {
             maxY = Math.max(maxY, p.pos.y + p.r);
         });
 
-        const cellSize = s.cellSize, iso = s.isoThreshold, padding = BLOB_CONSTANTS.METABALL.ROI_PADDING;
+        const cellSize = s.cellSize, iso = worm.thickness ?? s.isoThreshold, padding = BLOB_CONSTANTS.METABALL.ROI_PADDING;
         const gridMinX = Math.floor((minX - padding) / cellSize) * cellSize;
         const gridMinY = Math.floor((minY - padding) / cellSize) * cellSize;
         const cols = Math.floor((Math.ceil((maxX + padding) / cellSize) * cellSize - gridMinX) / cellSize);
@@ -450,52 +462,26 @@ export class PhysicsSystem implements System {
         }
     }
 
-    private getSoulHueOffset(axes: any): number {
-        if (!axes) return 0;
-        let offset = 0;
-        // Bold -> Red/Orange (Warm shift) - MORE DRAMATIC
-        if (axes.bold > 0) offset -= 80 * axes.bold;
-        // Calm -> Blue/Teal (Cool shift)
-        if (axes.calm > 0) offset += 60 * axes.calm;
-        // Tender -> Pink/Magenta
-        if (axes.tender > 0) offset += 100 * axes.tender;
-        // Poetic -> Purple/Violet
-        if (axes.poetic > 0) offset += 90 * axes.poetic;
-        // Mystery/Deep -> Dark Blue
-        if (axes.focused > 0) offset += 20 * axes.focused;
-
-        return offset;
+    private getMoodColor(mood: string): { h: number, s: number, l: number } {
+        // Distinct color palettes for each mood
+        switch (mood?.toLowerCase()) {
+            case 'serene': return { h: 180, s: 70, l: 75 }; // Cyan/Teal
+            case 'watchful': return { h: 210, s: 80, l: 60 }; // Azure Blue
+            case 'playful': return { h: 45, s: 95, l: 65 }; // Golden Yellow
+            case 'wistful': return { h: 260, s: 60, l: 70 }; // Soft Purple
+            case 'irritable': return { h: 0, s: 85, l: 55 }; // Red
+            case 'electric': return { h: 290, s: 100, l: 60 }; // Neon Magenta/Purple
+            case 'contemplative': return { h: 240, s: 70, l: 65 }; // Deep Blue
+            case 'impatient': return { h: 15, s: 90, l: 60 }; // Orange-Red
+            case 'buoyant': return { h: 320, s: 80, l: 75 }; // Hot Pink
+            case 'mellow': return { h: 150, s: 60, l: 70 }; // Soft Green
+            default: return { h: 0, s: 0, l: 60 }; // Grey fallback
+        }
     }
 
-    private getSoulSaturation(axes: any): number {
-        if (!axes) return 60; // Default
-        let sat = 60;
-
-        // Intensity boosters
-        if (axes.focused > 0) sat += 30 * axes.focused; // Focused = Vibrant
-        if (axes.bold > 0) sat += 20 * axes.bold;       // Bold = Vibrant
-
-        // Intensity reducers
-        if (axes.calm > 0) sat -= 10 * axes.calm;       // Calm = Slightly muted
-        if (axes.hopeful < -0.3) sat -= 40;             // Despair = Grey
-
-        return this.clamp(sat, 10, 100);
-    }
-
-    private getSoulLightness(axes: any): number {
-        if (!axes) return 60; // Default
-        let light = 60;
-
-        // Brightness boosters
-        if (axes.hopeful > 0) light += 20 * axes.hopeful; // Hopeful = Bright
-        if (axes.tender > 0) light += 10 * axes.tender;   // Tender = Soft/Bright
-
-        // Darkness boosters
-        if (axes.stubborn > 0) light -= 20 * axes.stubborn; // Stubborn = Darker/Solid
-        if (axes.focused > 0) light -= 10 * axes.focused;   // Focused = Deep color implies slightly darker for contrast
-
-        return this.clamp(light, 20, 90);
-    }
+    private getSoulHueOffset(axes: any): number { return 0; } // Deprecated
+    private getSoulSaturation(axes: any): number { return 0; } // Deprecated
+    private getSoulLightness(axes: any): number { return 0; } // Deprecated
 
     cleanup() {
         this.engine.events.off(EVENTS.WORM_BORN, this.handleWormBorn);
