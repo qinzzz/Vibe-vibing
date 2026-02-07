@@ -88,9 +88,21 @@ Functionality:
 
 * **Visual Evolution**: The worm's physical form now reacts dynamically to its **Words**, **Mood** and **Soul**. Enhancements include specific colors and particle effects for different emotional states (e.g., Electric, Serene, Irritable).
 * **Dynamic Motto**: The worm's motto is now procedurally generated based on its current personality and mood, giving it a unique voice.
-* **Text Source Expansion**: Added new text sources to the stream, broadening the "Linguistic Ecology".
+* **Stream Diversity**: Expanded the "Linguistic Ecology" with AI-generated "Void Debris" featuring distinct eras to prevent repetition.
+* **Word Release**: Right-click (or double-click on Mac) a swallowed word to release it back into the void.
 * **Worm Settings**: Added a settings popover allowing users to observe the worm's current state and set the worm's mood or aesthetic preferences.
 * **Decluttering**: Optimized performance and visuals by automatically removing eaten words from the scene.
+
+Performance:
+
+* **Canvas Rendering**:
+  * Removed expensive `shadowBlur` from text rendering, replacing it with high-contrast color shifts for better FPS.
+  * Implemented **AABB (Axis-Aligned Bounding Box)** checks for broad-phase collision detection in the Stream of Consciousness.
+  * Added visibility-based gradient caching to minimize redundant radial gradient creation.
+* **Math Optimizations**:
+  * Pre-calculated squared radii in Marching Squares (metaball skinning) to avoid expensive `Math.sqrt` and exponentiation in the hot path.
+* **Diagnostics**:
+  * Added a database inspector (`server/inspect_db.ts`) to monitor table growth and verify query plans for LLM caching.
 
 Infra:
 
