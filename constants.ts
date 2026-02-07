@@ -41,7 +41,7 @@ export const BLOB_CONSTANTS = {
     KNEE_WEIGHT: 0.6,
     FOOT_WEIGHT: 0.2,
     ISO_THRESHOLD: 0.25,
-    CELL_SIZE: 12,
+    CELL_SIZE: 16, // Optimized from 12 for performance
     ROI_PADDING: 100
   }
 };

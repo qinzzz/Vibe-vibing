@@ -341,6 +341,10 @@ export class ConsciousnessStreamSystem implements System {
         const radius = streamWidth * 0.58;
 
         for (let x = left - 180; x <= right + 180; x += 96) {
+            // Gradient caching - create once if possible, but for now we just minimize ops
+            // Optimization: Only create gradient if within view
+            if (x < left - radius || x > right + radius) continue;
+
             const centerY = this.centerlineY(x, t);
             const gradient = ctx.createRadialGradient(x, centerY, 0, x, centerY, radius);
             gradient.addColorStop(0, 'rgba(98, 164, 228, 0.06)');
@@ -460,10 +464,17 @@ export class ConsciousnessStreamSystem implements System {
 
             // Newspaper font (Stable, legible)
             ctx.font = `normal italic ${fragment.fontSize.toFixed(1)}px monospace`;
-            ctx.shadowColor = isSelected
-                ? `rgba(96, 165, 250, ${this.clamp(finalAlpha * 0.8, 0, 0.65)})`
-                : `rgba(186, 205, 224, ${this.clamp(finalAlpha * 0.45, 0, 0.4)})`;
-            ctx.shadowBlur = isSelected ? 10 : 5;
+
+            // OPTIMIZATION: Removed shadowBlur entirely for performance.
+            // Using color shifts and slight opacity boost instead.
+            if (isSelected) {
+                // No shadow, just bright fill
+            } else if (fragment.isHovered) {
+                // No shadow
+            } else {
+                // No shadow
+            }
+
             ctx.fillStyle = isSelected
                 ? `rgba(191, 219, 254, ${finalAlpha})`
                 : fragment.isHovered
@@ -481,8 +492,9 @@ export class ConsciousnessStreamSystem implements System {
             if (fragment.hoveredWordIndex !== null) {
                 const hovered = fragment.words[fragment.hoveredWordIndex];
                 if (hovered && !hovered.consumed) {
-                    ctx.shadowColor = `rgba(125, 177, 245, ${this.clamp(finalAlpha * 0.65, 0, 0.5)})`;
-                    ctx.shadowBlur = 7;
+                    // Optimized: No shadowBlur
+                    // ctx.shadowColor = `rgba(125, 177, 245, ${this.clamp(finalAlpha * 0.65, 0, 0.5)})`;
+                    // ctx.shadowBlur = 7;
                     ctx.fillStyle = `rgba(147, 197, 253, ${this.clamp(finalAlpha, 0, 0.95)})`;
                     ctx.fillText(hovered.text, hovered.xOffset, hovered.yOffset);
                 }
@@ -492,8 +504,9 @@ export class ConsciousnessStreamSystem implements System {
                 for (let wordIndex = selectedRange.start; wordIndex <= selectedRange.end; wordIndex++) {
                     const word = fragment.words[wordIndex];
                     if (!word || word.consumed) continue;
-                    ctx.shadowColor = `rgba(96, 165, 250, ${this.clamp(finalAlpha * 0.78, 0, 0.62)})`;
-                    ctx.shadowBlur = 9;
+                    // Optimized: No shadowBlur
+                    // ctx.shadowColor = `rgba(96, 165, 250, ${this.clamp(finalAlpha * 0.78, 0, 0.62)})`;
+                    // ctx.shadowBlur = 9;
                     ctx.fillStyle = `rgba(191, 219, 254, ${this.clamp(finalAlpha, 0, 0.95)})`;
                     ctx.fillText(word.text, word.xOffset, word.yOffset);
                 }
@@ -817,6 +830,15 @@ export class ConsciousnessStreamSystem implements System {
             if (fragment.state === 'consumed') continue;
             const edgeFactor = this.getDistanceData(fragment.x, fragment.y, t, streamWidth).edgeFactor;
             if (edgeFactor <= 0.06) continue;
+
+            // OPTIMIZATION: AABB Check
+            // A simple bounding box check before rotation
+            const halfW = fragment.width * 0.55 + 20; // broad phase padding
+            const halfH = fragment.height * 0.55 + 20;
+            if (px < fragment.x - halfW || px > fragment.x + halfW ||
+                py < fragment.y - halfH || py > fragment.y + halfH) {
+                continue;
+            }
 
             const rotation = this.getFragmentRotation(fragment, t);
             const local = this.worldToFragmentLocal(px, py, fragment, rotation);

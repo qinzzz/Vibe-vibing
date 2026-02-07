@@ -328,15 +328,15 @@ export class PhysicsSystem implements System {
         }
 
         // Draw Metaballs
-        const metaballPoints: { pos: Vector2D, r: number, w: number }[] = [];
-        metaballPoints.push({ pos: core, r: coreRadius, w: s.coreWeight });
+        const metaballPoints: { pos: Vector2D, r: number, rSq: number, w: number }[] = [];
+        metaballPoints.push({ pos: core, r: coreRadius, rSq: coreRadius * coreRadius, w: s.coreWeight });
         legs.forEach(l => {
             const hip = { x: core.x + l.hipOffset.x, y: core.y + l.hipOffset.y };
-            metaballPoints.push({ pos: hip, r: hipRadius * 1.1, w: s.hipWeight }); // Slightly larger hips for better blending
-            metaballPoints.push({ pos: l.kneePos, r: kneeRadius, w: s.kneeWeight });
+            metaballPoints.push({ pos: hip, r: hipRadius * 1.1, rSq: (hipRadius * 1.1) ** 2, w: s.hipWeight });
+            metaballPoints.push({ pos: l.kneePos, r: kneeRadius, rSq: kneeRadius * kneeRadius, w: s.kneeWeight });
             let fr = footRadius;
             if (l.isStepping) fr *= (1 - Math.sin(l.stepProgress * Math.PI) * 0.25);
-            metaballPoints.push({ pos: l.footPos, r: fr, w: s.footWeight });
+            metaballPoints.push({ pos: l.footPos, r: fr, rSq: fr * fr, w: s.footWeight });
         });
 
         // Marching Squares Rendering

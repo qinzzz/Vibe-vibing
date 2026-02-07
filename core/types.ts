@@ -158,6 +158,7 @@ export interface Worm {
     digestionQueue: DigestionRecord[];
     soul: WormSoul;
     particles: SoulParticle[];
+    visualColor?: { h: number, s: number, l: number }; // Added for visual evolution
 }
 
 export interface SoulParticle {
