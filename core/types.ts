@@ -29,6 +29,8 @@ export interface SwallowedWord {
     pos: Vector2D;
     rotation: number;
     targetAnchor: 'core' | 'FL' | 'FR' | 'BL' | 'BR';
+    layoutOffset: Vector2D;
+    stirOffset: Vector2D;
     letters: InternalLetter[];
     isComplete: boolean;
 }

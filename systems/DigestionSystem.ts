@@ -60,9 +60,40 @@ export class DigestionSystem implements System {
         this.engine.events.on(EVENTS.WORD_REMOVED, this.handleWordRemoved);
         this.engine.events.on(EVENTS.READY_TO_REPRODUCE, this.handleReproductionReady);
         this.engine.events.on(EVENTS.REPRODUCE_TRIGGERED, this.handleReproduceTrigger);
+        this.engine.events.on('INPUT_START', this.handleInput);
 
         this.hydrateStomach(3); // Start hydration with retries
     }
+
+    private handleInput = (pos: { x: number, y: number }) => {
+        const worm = this.engine.activeWorm;
+        const dist = Math.hypot(pos.x - worm.corePos.x, pos.y - worm.corePos.y);
+
+        // Click on worm (radius ~60) or near words to stir
+        if (dist < 80 || worm.swallowedWords.some(w => Math.hypot(pos.x - w.pos.x, pos.y - w.pos.y) < 30)) {
+            const stirStrength = 120;
+            worm.swallowedWords.forEach(word => {
+                // Direction from center to word
+                let dx = word.pos.x - worm.corePos.x;
+                let dy = word.pos.y - worm.corePos.y;
+                let len = Math.hypot(dx, dy);
+
+                // If too close to center, pick random direction
+                if (len < 1) {
+                    const angle = Math.random() * Math.PI * 2;
+                    dx = Math.cos(angle);
+                    dy = Math.sin(angle);
+                    len = 1;
+                }
+
+                // Push outwards
+                const push = (1 / len) * stirStrength * 20 + Math.random() * 40;
+                word.stirOffset.x += (dx / len) * stirStrength + (Math.random() - 0.5) * 60;
+                word.stirOffset.y += (dy / len) * stirStrength + (Math.random() - 0.5) * 60;
+            });
+            this.engine.events.emit(EVENTS.SFX_MUNCH, {}); // Reuse sound for feedback
+        }
+    };
 
     private handleReproductionReady = () => {
         // Only set canReproduce flag, don't show prompt yet
@@ -155,6 +186,8 @@ export class DigestionSystem implements System {
                                 pos: { ...worm.corePos },
                                 rotation: (Math.random() - 0.5) * 0.6,
                                 targetAnchor: target,
+                                layoutOffset: { x: (Math.random() - 0.5) * 20, y: (Math.random() - 0.5) * 20 },
+                                stirOffset: { x: 0, y: 0 },
                                 letters: word.split('').map((char, i) => ({
                                     id: Math.random().toString(),
                                     char,
@@ -255,8 +288,44 @@ export class DigestionSystem implements System {
                 const l = this.engine.blobState.legs.find(leg => leg.id === word.targetAnchor);
                 if (l) anchor = { x: corePos.x + l.hipOffset.x, y: corePos.y + l.hipOffset.y };
             }
-            word.pos.x += (anchor.x - word.pos.x) * BLOB_CONSTANTS.SPRING_STRENGTH;
-            word.pos.y += (anchor.y - word.pos.y) * BLOB_CONSTANTS.SPRING_STRENGTH;
+
+            // Apply layout + stir offset
+            const targetX = anchor.x + word.layoutOffset.x + word.stirOffset.x;
+            const targetY = anchor.y + word.layoutOffset.y + word.stirOffset.y;
+
+            // Decay stir offset
+            word.stirOffset.x *= 0.92;
+            word.stirOffset.y *= 0.92;
+
+            // Clamp check (soft boundary)
+            const distFromCore = Math.hypot(word.stirOffset.x, word.stirOffset.y);
+            if (distFromCore > 120) {
+                const scale = 120 / distFromCore;
+                word.stirOffset.x *= scale;
+                word.stirOffset.y *= scale;
+            }
+
+            // Spring to anchor
+            word.pos.x += (targetX - word.pos.x) * BLOB_CONSTANTS.SPRING_STRENGTH;
+            word.pos.y += (targetY - word.pos.y) * BLOB_CONSTANTS.SPRING_STRENGTH;
+
+            // Simple repulsion from other words
+            worm.swallowedWords.forEach(other => {
+                if (word === other) return;
+                const dx = word.pos.x - other.pos.x;
+                const dy = word.pos.y - other.pos.y;
+                const distSq = dx * dx + dy * dy;
+                const minDist = 45;
+                if (distSq < minDist * minDist && distSq > 0.1) {
+                    const dist = Math.sqrt(distSq);
+                    const force = (minDist - dist) * 0.05;
+                    const nx = dx / dist;
+                    const ny = dy / dist;
+                    word.pos.x += nx * force;
+                    word.pos.y += ny * force;
+                }
+            });
+
             word.letters.forEach(letter => {
                 const tx = word.pos.x + letter.targetOffset.x, ty = word.pos.y + letter.targetOffset.y;
                 letter.pos.x += (tx - letter.pos.x) * (letter.isSettled ? 0.2 : 0.08);
@@ -300,6 +369,8 @@ export class DigestionSystem implements System {
             pos: { ...this.engine.blobState.corePos },
             rotation: (Math.random() - 0.5) * 0.6,
             targetAnchor: target,
+            layoutOffset: { x: (Math.random() - 0.5) * 30, y: (Math.random() - 0.5) * 30 },
+            stirOffset: { x: 0, y: 0 },
             letters: [],
             isComplete: false
         });
@@ -421,6 +492,8 @@ export class DigestionSystem implements System {
                     pos: { ...child.corePos },
                     rotation: (Math.random() - 0.5) * 0.6,
                     targetAnchor: target,
+                    layoutOffset: { x: (Math.random() - 0.5) * 20, y: (Math.random() - 0.5) * 20 },
+                    stirOffset: { x: 0, y: 0 },
                     letters: word.split('').map((char, i) => ({
                         id: Math.random().toString(),
                         char,
@@ -862,6 +935,13 @@ export class DigestionSystem implements System {
             ctx.fillText(this.activeLetterFeed.char, this.activeLetterFeed.pos.x, this.activeLetterFeed.pos.y);
         }
 
+        // Draw active word (flying to worm)
+        if (this.eatingState === EatingState.ATTACHING && this.activeWord) {
+            ctx.font = `bold ${BLOB_CONSTANTS.BASE_LETTER_SIZE}px 'Space Mono'`;
+            ctx.fillStyle = '#fff';
+            ctx.fillText(this.activeWord.text, this.activeWord.pos.x, this.activeWord.pos.y);
+        }
+
         // Draw Speech Bubble
         if (this.speechBubble) {
             const core = this.engine.blobState.corePos;
@@ -900,5 +980,6 @@ export class DigestionSystem implements System {
         this.engine.events.off(EVENTS.STOMACH_CLEAR, this.handleStomachClear);
         this.engine.events.off(EVENTS.READY_TO_REPRODUCE, this.handleReproductionReady);
         this.engine.events.off(EVENTS.REPRODUCE_TRIGGERED, this.handleReproduceTrigger);
+        this.engine.events.off('INPUT_START', this.handleInput);
     }
 }

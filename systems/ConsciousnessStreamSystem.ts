@@ -292,7 +292,7 @@ export class ConsciousnessStreamSystem implements System {
                 const dx = b.x - a.x;
                 const dy = b.y - a.y;
                 const dist = Math.hypot(dx, dy);
-                const minDistance = Math.max(84, (a.width + b.width) * 0.26);
+                const minDistance = Math.max(110, (a.width + b.width) * 0.35);
                 if (dist < 0.001 || dist >= minDistance) continue;
 
                 const overlap = minDistance - dist;
@@ -562,7 +562,7 @@ export class ConsciousnessStreamSystem implements System {
                 : this.engine.cameraPos.x - this.engine.width / 2 - this.randomRange(120, 320);
 
             const centerY = this.centerlineY(x, t);
-            y = centerY + this.biasedRange(-halfWidth, halfWidth);
+            y = centerY + this.randomRange(-halfWidth * 0.85, halfWidth * 0.85);
 
             if (!this.isCrowdedAt(x, y, Math.max(82, width * 0.52))) {
                 placed = true;
@@ -586,8 +586,8 @@ export class ConsciousnessStreamSystem implements System {
             fontSize,
             width,
             height: fontSize * 1.08,
-            baseRotation: this.degToRad(this.randomRange(-6, 6)),
-            rotationWobbleAmp: this.degToRad(this.randomRange(0.7, 1.9)),
+            baseRotation: this.degToRad(this.randomRange(-24, 24)),
+            rotationWobbleAmp: this.degToRad(this.randomRange(2.2, 5.5)),
             rotationWobbleSpeed: this.randomRange(0.35, 0.92),
             rotationPhase: this.randomRange(0, Math.PI * 2),
             wormGlow: 0,
@@ -755,8 +755,8 @@ export class ConsciousnessStreamSystem implements System {
         const speed = speedBase + speedNoise + streamPulse;
 
         const crossNoise = this.valueNoise2D(x * 0.0022 + t * 0.14 + 17.3, y * 0.0031 - t * 0.1 + 5.2)
-            * this.lerp(0.8, 6.8, edgeFactor);
-        const centerPull = -signedDistance * 0.13;
+            * this.lerp(3.5, 14.0, edgeFactor);
+        const centerPull = -signedDistance * 0.035;
         const crossVelocity = crossNoise + centerPull;
 
         const vx = tx * speed - ty * crossVelocity;
@@ -934,6 +934,12 @@ export class ConsciousnessStreamSystem implements System {
     private isCrowdedAt(x: number, y: number, minDistance: number) {
         for (const fragment of this.fragments) {
             if (fragment.state === 'consumed') continue;
+
+            // Check strictly for same "line" placement within crowded X-range
+            if (Math.abs(fragment.y - y) < 18 && Math.abs(fragment.x - x) < 400) {
+                return true;
+            }
+
             const dx = fragment.x - x;
             const dy = fragment.y - y;
             if (dx * dx + dy * dy < minDistance * minDistance) {
@@ -953,14 +959,14 @@ export class ConsciousnessStreamSystem implements System {
     }
 
     private getStreamWidth() {
-        const base = this.clamp(this.engine.height * 0.35, 300, 450);
+        const base = this.clamp(this.engine.height * 0.55, 450, 700);
         const t = performance.now() * 0.001;
         const animated = base + Math.sin(t * 0.12) * 14 + this.valueNoise1D(t * 0.18) * 11;
-        return this.clamp(animated, 300, 450);
+        return this.clamp(animated, 450, 700);
     }
 
     private getBaseFragmentCount() {
-        return Math.round(this.clamp(this.engine.width * 0.0074, 8, 16));
+        return Math.round(this.clamp(this.engine.width * 0.0045, 5, 8));
     }
 
     private getBaseParticleCount() {
