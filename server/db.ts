@@ -120,10 +120,31 @@ export const clearStomach = () => {
   db.prepare('DELETE FROM generated_content').run();
 };
 
+const MAX_CACHE_PER_CONTEXT = 50;
+
 export const saveGeneratedContent = (context: string, content: string) => {
   try {
+    // 1. Insert new content
     const stmt = db.prepare('INSERT INTO generated_content (context, content) VALUES (?, ?)');
     stmt.run(context, content);
+
+    // 2. Check and enforce limit
+    const countStmt = db.prepare('SELECT COUNT(*) as count FROM generated_content WHERE context = ?');
+    const result = countStmt.get(context) as { count: number };
+
+    if (result.count > MAX_CACHE_PER_CONTEXT) {
+      // Delete oldest
+      const deleteStmt = db.prepare(`
+        DELETE FROM generated_content 
+        WHERE id IN (
+          SELECT id FROM generated_content 
+          WHERE context = ? 
+          ORDER BY created_at ASC 
+          LIMIT ?
+        )
+      `);
+      deleteStmt.run(context, result.count - MAX_CACHE_PER_CONTEXT);
+    }
   } catch (err) {
     console.error('[DB] Failed to cache content:', err);
   }
