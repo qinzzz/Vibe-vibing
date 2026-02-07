@@ -108,8 +108,15 @@ export class DigestionSystem implements System {
 
         console.log(`[DEBUG] Forcing mood target for ${worm.id}`, data.axes);
 
-        // Set target axes for gradual transition
-        worm.soul.targetAxes = { ...worm.soul.axes, ...data.axes };
+        // Immediately apply new axes
+        worm.soul.axes = { ...worm.soul.axes, ...data.axes };
+        worm.soul.targetAxes = { ...worm.soul.axes }; // clear target transition
+
+        // Force immediate identity update
+        this.regenerateIdentity(worm, true);
+
+        // Emit events to update UI immediately
+        this.engine.events.emit(EVENTS.VOCAB_UPDATED, Array.from(worm.vocabulary));
     };
 
     private handleWordRemoved = (id: string) => {
@@ -827,15 +834,44 @@ export class DigestionSystem implements System {
         };
 
         if (updateMotto) {
-            worm.soul.motto = this.buildMotto(axes, mood);
+            let shouldUpdate = false;
+
+            // 1. If mood changed, always update
+            if (worm.soul.lastMottoMood !== mood) {
+                shouldUpdate = true;
+            }
+
+            // 2. If soul changed significantly since last motto
+            if (!shouldUpdate && worm.soul.lastMottoAxes) {
+                let dist = 0;
+                for (const key of this.AXIS_KEYS) {
+                    const diff = (worm.soul.axes[key] || 0) - (worm.soul.lastMottoAxes[key] || 0);
+                    dist += diff * diff;
+                }
+                if (Math.sqrt(dist) > 0.35) { // Threshold for "significant change"
+                    shouldUpdate = true;
+                }
+            } else if (!worm.soul.lastMottoAxes) {
+                shouldUpdate = true;
+            }
+
+            if (shouldUpdate) {
+                worm.soul.motto = this.buildMotto(axes, mood);
+                worm.soul.lastMottoAxes = { ...axes };
+                worm.soul.lastMottoMood = mood;
+            }
         }
     }
 
     private buildMotto(axes: any, mood: string) {
-        if (axes.hopeful > 0.35) return 'I grow by what I can keep.';
-        if (axes.calm < -0.25) return 'I chase storms but live on calm.';
+        if (axes.hopeful > 0.3) return 'I grow by what I can keep.';
+        if (axes.calm < -0.3) return 'I chase storms but live on calm.';
         if (axes.poetic > 0.3) return 'Feed me gently; I am learning.';
         if (mood === 'contemplative') return 'What I eat, I become.';
+        if (axes.bold > 0.4) return 'I will devour the obstacles.';
+        if (axes.curious > 0.4) return 'Every taste is a question answered.';
+        if (axes.tender > 0.4) return 'Softness is the only strength.';
+
         return 'I remember what survives the current.';
     }
 

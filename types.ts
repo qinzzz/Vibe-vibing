@@ -103,6 +103,7 @@ export interface WormSoul {
   targetAxes?: SoulAxes; // For gradual personality shifts
   identity: SoulIdentity;
   motto: string;
+  lastMottoAxes?: SoulAxes; // For tracking motto regeneration triggers
   absorbedCount: number;
 }
 
