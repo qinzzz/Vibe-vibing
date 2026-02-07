@@ -90,6 +90,7 @@ export class ConsciousnessStreamSystem implements System {
     private particles: StreamParticle[] = [];
     private eddies: StreamEddy[] = [];
     private streamThoughts: StreamThought[] = [];
+    private thoughtDeck: number[] = [];
     private seenThoughtTexts: Set<string> = new Set();
     private thoughtRefreshTimer: number | null = null;
     private isRefreshingThoughts = false;
@@ -113,8 +114,8 @@ export class ConsciousnessStreamSystem implements System {
     private readonly EAT_DISTANCE = 70;
     private readonly WORM_INFLUENCE_RADIUS = 180;
     private readonly WARMUP_DURATION = 14; // seconds
-    private readonly THOUGHT_REFRESH_MS = 2 * 60 * 60 * 1000;
-    private readonly THOUGHT_FETCH_LIMIT = 20;
+    private readonly THOUGHT_REFRESH_MS = 20 * 1000;
+    private readonly THOUGHT_FETCH_LIMIT = 10;
 
     init(engine: Engine) {
         this.engine = engine;
@@ -1002,6 +1003,7 @@ export class ConsciousnessStreamSystem implements System {
     private initializeThoughtStore() {
         this.seenThoughtTexts.clear();
         this.streamThoughts = [];
+        this.thoughtDeck = [];
         // Re-enabled with newspaper/AI prompt seed data
         for (const thought of STREAM_SOURCE) {
             this.addThoughtIfNew({
@@ -1074,7 +1076,24 @@ export class ConsciousnessStreamSystem implements System {
             };
         }
 
-        return this.streamThoughts[this.randomInt(0, this.streamThoughts.length - 1)];
+        // Refill deck if empty
+        if (this.thoughtDeck.length === 0) {
+            // Create indices for all thoughts
+            this.thoughtDeck = Array.from({ length: this.streamThoughts.length }, (_, i) => i);
+            // Shuffle
+            for (let i = this.thoughtDeck.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [this.thoughtDeck[i], this.thoughtDeck[j]] = [this.thoughtDeck[j], this.thoughtDeck[i]];
+            }
+        }
+
+        const index = this.thoughtDeck.pop();
+        // Fallback for safety, though theoretically impossible if logic is correct
+        if (index === undefined) {
+            return this.streamThoughts[this.randomInt(0, this.streamThoughts.length - 1)];
+        }
+
+        return this.streamThoughts[index];
     }
 
     private layoutFragmentWords(text: string, fontSize: number, maxWidth: number) {

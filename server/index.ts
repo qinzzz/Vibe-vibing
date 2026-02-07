@@ -3,7 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from "@google/genai";
 import OpenAI from 'openai';
-import { saveWord, getStomachContent, deleteWord, clearStomach, saveWorm, getWorms, deleteWorm, deleteWormWords, saveGeneratedContent, getCachedContent } from './db';
+import { saveWord, getStomachContent, deleteWord, clearStomach, saveWorm, getWorms, deleteWorm, deleteWormWords, saveGeneratedContent, getCachedContent, saveThoughtFragment, getThoughtFragments } from './db';
 import path from 'path';
 
 // Load env from project root
@@ -395,7 +395,9 @@ app.get('/api/stream-thoughts', async (req, res) => {
 // 1. Eat Word
 app.get('/api/newspaper-thoughts', async (req, res) => {
     const rawLimit = Number(req.query.limit);
-    const limit = 5;
+    const limit = Number.isFinite(rawLimit)
+        ? Math.max(1, Math.min(Math.floor(rawLimit), 50))
+        : 5;
 
     try {
         console.log(`[CONSCIOUSNESS] Request received (limit=${limit})`);
@@ -406,79 +408,87 @@ app.get('/api/newspaper-thoughts', async (req, res) => {
 
         const thoughts: any[] = [];
 
-        // 1. Generate PRE-AI fragments (The Era of Atoms)
-        if (preAICount > 0) {
-            const preAIPrompt = `Generate ${preAICount} text fragments from the PRE-AI ERA (1960s-1990s).
+        // --- Helper: Get Diverse Thoughts ---
+        const getDiverseThoughts = async (count: number, era: 'pre_ai' | 'post_ai') => {
+            // 1. Try to fetch from granular cache
+            let fragments = getThoughtFragments(era, count);
 
-DIRECTIVES:
-* Time Period: 1960s–1990s.
-* Core Themes: Physicality, irreversibility, local community, trust in photography, slow information, human witness.
-* Style: Earnest, descriptive, grounded. Focus on tangible objects (rust, paper, handshake, bricks).
-* Content Variety: Mix major global events (moon landings) with hyper-local trivia (church bake sales, lost cats, classified ads for physical goods).
-* Vibe: "The ink is dry and cannot be changed."
+            // 2. If we don't have enough, generate a fresh batch and save it
+            if (fragments.length < count) {
+                console.log(`[CONSCIOUSNESS] Not enough ${era} fragments (got ${fragments.length}, need ${count}). Generating fresh batch...`);
 
-Keep each fragment between 20 and 50 words.
-Return ONLY a JSON array of strings: ["fragment1", "fragment2", ...]`;
+                // Dynamic Themes for Diversity
+                const preAiThemes = [
+                    "Physicality (rust, paper, weight)", "Irreversibility (ink, carved stone)",
+                    "Local Community (gossip, handshake)", "Slow Information (waiting for letters)",
+                    "Analog Tech (radio static, film grain)", "Nature claiming ruins",
+                    "Silence and Boredom", "Manual Labor and Craft"
+                ];
+                const postAiThemes = [
+                    "Verification Paranoia (deepfakes)", "Infinite Reproducibility (copy-paste)",
+                    "Algorithmic Hallucinations", "Reality Breaking Down",
+                    "Digital Loneliness / Parasociality", "Surveillance Capitalism",
+                    "Glitch Aesthetics", "Memory vs Database"
+                ];
 
-            const preAIText = await generateText(preAIPrompt, 'pre_ai_fragments');
-            const preAIMatch = preAIText.trim().match(/\[[\s\S]*\]/);
+                const theme = era === 'pre_ai'
+                    ? preAiThemes[Math.floor(Math.random() * preAiThemes.length)]
+                    : postAiThemes[Math.floor(Math.random() * postAiThemes.length)];
 
-            if (preAIMatch) {
+                const missingCount = Math.max(20, count * 2); // Generate more than needed to stock up
+                const prompt = era === 'pre_ai'
+                    ? `Generate ${missingCount} unique text fragments from the PRE-AI ERA (1960s-1990s).
+                       Target Theme: "${theme}".
+                       Style: Earnest, descriptive, grounded. Focus on tangible objects.
+                       Keep each fragment between 20-50 words. Return JSON array of strings.`
+                    : `Generate ${missingCount} unique text fragments from the POST-AI ERA (2028-2040).
+                       Target Theme: "${theme}".
+                       Style: Clinical, skeptical, urgent.
+                       Keep each fragment between 20-50 words. Return JSON array of strings.`;
+
                 try {
-                    const fragments = JSON.parse(preAIMatch[0]);
-                    if (Array.isArray(fragments)) {
-                        fragments.forEach((text, i) => {
-                            console.log(`[PRE-AI] ${text}`);
-                            thoughts.push({
-                                id: `pre-${Date.now()}-${i}`,
-                                text: String(text),
-                                source: 'Archive',
-                                timestamp: Math.floor(Date.now() / 1000)
-                            });
-                        });
+                    // Note: We bypass 'generateText' caching here to force new generation, 
+                    // or we could use it but with a unique context key if we wanted to cache the batch result too.
+                    // For now, let's use a unique key to allow caching but force variety via the random theme.
+                    const uniqueContext = `${era}_fragments_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+                    const text = await generateText(prompt, uniqueContext);
+
+                    const match = text.trim().match(/\[[\s\S]*\]/);
+                    if (match) {
+                        const newFragments = JSON.parse(match[0]);
+                        if (Array.isArray(newFragments)) {
+                            newFragments.forEach(t => saveThoughtFragment(String(t), era));
+                            // Refetch to mix with existing ones
+                            fragments = getThoughtFragments(era, count);
+                        }
                     }
-                } catch (e) {
-                    console.warn('[CONSCIOUSNESS] Failed to parse Pre-AI fragments');
+                } catch (err) {
+                    console.error(`[CONSCIOUSNESS] Failed to generate ${era} thoughts:`, err);
                 }
             }
-        }
+            return fragments;
+        };
 
-        // 2. Generate POST-AI fragments (The Era of Noise)
-        if (postAICount > 0) {
-            const postAIPrompt = `Generate ${postAICount} text fragments from the POST-AI ERA (2028-2040).
+        // --- Execute fetching ---
+        const preAiFragments = await getDiverseThoughts(preAICount, 'pre_ai');
+        preAiFragments.forEach((text, i) => {
+            thoughts.push({
+                id: `pre-${Date.now()}-${i}-${Math.random().toString(36).substr(2, 5)}`,
+                text: text,
+                source: 'Archive',
+                timestamp: Math.floor(Date.now() / 1000)
+            });
+        });
 
-DIRECTIVES:
-* Time Period: 2028–2040.
-* Core Themes: Verification paranoia, infinite reproducibility, loss of objective truth, algorithmic hallucinations, deepfakes, reality breaking down.
-* Style: Clinical, skeptical, urgent, slightly disjointed. Focus on the inability to distinguish real from fake.
-* Content Variety: Identity theft, copyright loops, glitching live streams, captcha failures, emotional relationships with code.
-* Vibe: "Nothing is real and everything is recording."
-
-Keep each fragment between 20 and 50 words.
-Return ONLY a JSON array of strings: ["fragment1", "fragment2", ...]`;
-
-            const postAIText = await generateText(postAIPrompt, 'post_ai_fragments');
-            const postAIMatch = postAIText.trim().match(/\[[\s\S]*\]/);
-
-            if (postAIMatch) {
-                try {
-                    const fragments = JSON.parse(postAIMatch[0]);
-                    if (Array.isArray(fragments)) {
-                        fragments.forEach((text, i) => {
-                            console.log(`[POST-AI] ${text}`);
-                            thoughts.push({
-                                id: `post-${Date.now()}-${i}`,
-                                text: String(text),
-                                source: 'System',
-                                timestamp: Math.floor(Date.now() / 1000)
-                            });
-                        });
-                    }
-                } catch (e) {
-                    console.warn('[CONSCIOUSNESS] Failed to parse Post-AI fragments');
-                }
-            }
-        }
+        const postAiFragments = await getDiverseThoughts(postAICount, 'post_ai');
+        postAiFragments.forEach((text, i) => {
+            thoughts.push({
+                id: `post-${Date.now()}-${i}-${Math.random().toString(36).substr(2, 5)}`,
+                text: text,
+                source: 'System',
+                timestamp: Math.floor(Date.now() / 1000)
+            });
+        });
 
         // Shuffle
         for (let i = thoughts.length - 1; i > 0; i--) {

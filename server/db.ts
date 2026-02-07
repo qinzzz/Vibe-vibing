@@ -48,6 +48,13 @@ db.exec(`
     content TEXT NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+
+  CREATE TABLE IF NOT EXISTS thought_fragments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    text TEXT NOT NULL UNIQUE,
+    era TEXT NOT NULL, -- 'pre_ai' or 'post_ai'
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 
 // Auto-Migration: Add thickness column if missing (for existing DBs)
@@ -188,5 +195,80 @@ export const getCachedContent = (context: string): string | null => {
     return null;
   }
 };
+
+// Thought Fragments Management
+export const saveThoughtFragment = (text: string, era: 'pre_ai' | 'post_ai') => {
+  try {
+    const stmt = db.prepare('INSERT OR IGNORE INTO thought_fragments (text, era) VALUES (?, ?)');
+    stmt.run(text, era);
+  } catch (err) {
+    console.error('[DB] Failed to save thought fragment:', err);
+  }
+};
+
+export const getThoughtFragments = (era: 'pre_ai' | 'post_ai', limit: number): string[] => {
+  try {
+    const stmt = db.prepare('SELECT text FROM thought_fragments WHERE era = ? ORDER BY RANDOM() LIMIT ?');
+    const rows = stmt.all(era, limit) as { text: string }[];
+    return rows.map(r => r.text);
+  } catch (err) {
+    console.error('[DB] Failed to get thought fragments:', err);
+    return [];
+  }
+};
+
+export const migrateLegacyThoughts = () => {
+  try {
+    console.log('[DB] Checking for legacy thought migration...');
+    // Migrate Pre-AI
+    const preAiStmt = db.prepare("SELECT content FROM generated_content WHERE context = 'pre_ai_fragments'");
+    const preAiRows = preAiStmt.all() as { content: string }[];
+    let count = 0;
+    for (const row of preAiRows) {
+      try {
+        const fragmentMatch = row.content.trim().match(/\[[\s\S]*\]/);
+        if (fragmentMatch) {
+          const fragments = JSON.parse(fragmentMatch[0]);
+          if (Array.isArray(fragments)) {
+            fragments.forEach((text: string) => {
+              saveThoughtFragment(text, 'pre_ai');
+              count++;
+            });
+          }
+        }
+      } catch (e) { continue; }
+    }
+
+    // Migrate Post-AI
+    const postAiStmt = db.prepare("SELECT content FROM generated_content WHERE context = 'post_ai_fragments'");
+    const postAiRows = postAiStmt.all() as { content: string }[];
+    for (const row of postAiRows) {
+      try {
+        const fragmentMatch = row.content.trim().match(/\[[\s\S]*\]/);
+        if (fragmentMatch) {
+          const fragments = JSON.parse(fragmentMatch[0]);
+          if (Array.isArray(fragments)) {
+            fragments.forEach((text: string) => {
+              saveThoughtFragment(text, 'post_ai');
+              count++;
+            });
+          }
+        }
+      } catch (e) { continue; }
+    }
+
+    if (count > 0) {
+      console.log(`[DB] Migrated ${count} legacy thoughts to individual fragments.`);
+      // Optional: Clear old cache to prevent double usage, or keep as backup. 
+      // decided to keep generated_content as is for now as a fallback/record
+    }
+
+  } catch (err) {
+    console.error('[DB] Legacy migration failed:', err);
+  }
+};
+
+// Run migration on startup
+migrateLegacyThoughts();
 
 export default db;
