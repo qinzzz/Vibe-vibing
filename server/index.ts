@@ -393,6 +393,107 @@ app.get('/api/stream-thoughts', async (req, res) => {
 });
 
 // 1. Eat Word
+app.get('/api/newspaper-thoughts', async (req, res) => {
+    const rawLimit = Number(req.query.limit);
+    const limit = 5;
+
+    try {
+        console.log(`[CONSCIOUSNESS] Request received (limit=${limit})`);
+
+        // Calculate split: 50% Pre-AI, 50% Post-AI
+        const preAICount = Math.ceil(limit * 0.5);
+        const postAICount = limit - preAICount;
+
+        const thoughts: any[] = [];
+
+        // 1. Generate PRE-AI fragments (The Era of Atoms)
+        if (preAICount > 0) {
+            const preAIPrompt = `Generate ${preAICount} text fragments from the PRE-AI ERA (1960s-1990s).
+
+DIRECTIVES:
+* Time Period: 1960s–1990s.
+* Core Themes: Physicality, irreversibility, local community, trust in photography, slow information, human witness.
+* Style: Earnest, descriptive, grounded. Focus on tangible objects (rust, paper, handshake, bricks).
+* Content Variety: Mix major global events (moon landings) with hyper-local trivia (church bake sales, lost cats, classified ads for physical goods).
+* Vibe: "The ink is dry and cannot be changed."
+
+Keep each fragment between 20 and 50 words.
+Return ONLY a JSON array of strings: ["fragment1", "fragment2", ...]`;
+
+            const preAIText = await generateText(preAIPrompt, 'pre_ai_fragments');
+            const preAIMatch = preAIText.trim().match(/\[[\s\S]*\]/);
+
+            if (preAIMatch) {
+                try {
+                    const fragments = JSON.parse(preAIMatch[0]);
+                    if (Array.isArray(fragments)) {
+                        fragments.forEach((text, i) => {
+                            console.log(`[PRE-AI] ${text}`);
+                            thoughts.push({
+                                id: `pre-${Date.now()}-${i}`,
+                                text: String(text),
+                                source: 'Archive',
+                                timestamp: Math.floor(Date.now() / 1000)
+                            });
+                        });
+                    }
+                } catch (e) {
+                    console.warn('[CONSCIOUSNESS] Failed to parse Pre-AI fragments');
+                }
+            }
+        }
+
+        // 2. Generate POST-AI fragments (The Era of Noise)
+        if (postAICount > 0) {
+            const postAIPrompt = `Generate ${postAICount} text fragments from the POST-AI ERA (2028-2040).
+
+DIRECTIVES:
+* Time Period: 2028–2040.
+* Core Themes: Verification paranoia, infinite reproducibility, loss of objective truth, algorithmic hallucinations, deepfakes, reality breaking down.
+* Style: Clinical, skeptical, urgent, slightly disjointed. Focus on the inability to distinguish real from fake.
+* Content Variety: Identity theft, copyright loops, glitching live streams, captcha failures, emotional relationships with code.
+* Vibe: "Nothing is real and everything is recording."
+
+Keep each fragment between 20 and 50 words.
+Return ONLY a JSON array of strings: ["fragment1", "fragment2", ...]`;
+
+            const postAIText = await generateText(postAIPrompt, 'post_ai_fragments');
+            const postAIMatch = postAIText.trim().match(/\[[\s\S]*\]/);
+
+            if (postAIMatch) {
+                try {
+                    const fragments = JSON.parse(postAIMatch[0]);
+                    if (Array.isArray(fragments)) {
+                        fragments.forEach((text, i) => {
+                            console.log(`[POST-AI] ${text}`);
+                            thoughts.push({
+                                id: `post-${Date.now()}-${i}`,
+                                text: String(text),
+                                source: 'System',
+                                timestamp: Math.floor(Date.now() / 1000)
+                            });
+                        });
+                    }
+                } catch (e) {
+                    console.warn('[CONSCIOUSNESS] Failed to parse Post-AI fragments');
+                }
+            }
+        }
+
+        // Shuffle
+        for (let i = thoughts.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [thoughts[i], thoughts[j]] = [thoughts[j], thoughts[i]];
+        }
+
+        console.log(`[CONSCIOUSNESS] ✅ Sent ${thoughts.length} thoughts to client`);
+        return res.json({ thoughts });
+    } catch (err: any) {
+        console.error("[CONSCIOUSNESS] ❌ Failed:", err.message);
+        res.status(500).json({ error: 'Failed to generate thoughts' });
+    }
+});
+
 app.post('/api/eat', (req, res) => {
     const { id, wormId, text } = req.body;
     console.log(`[SERVER] Eating word: ${text} (id: ${id}, wormId: ${wormId})`);
