@@ -3,7 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from "@google/genai";
 import OpenAI from 'openai';
-import { saveWord, getStomachContent, deleteWord, clearStomach, saveWorm, getWorms, deleteWorm, deleteWormWords } from './db';
+import { saveWord, getStomachContent, deleteWord, clearStomach, saveWorm, getWorms, deleteWorm, deleteWormWords, saveGeneratedContent, getCachedContent } from './db';
 import path from 'path';
 
 // Load env from project root
@@ -40,7 +40,7 @@ if (aiProvider === 'openai' && (!openaiKey || openaiKey === 'your_key_here')) {
     console.warn('[SERVER] ⚠️  AI features will not work. Get key from: https://platform.openai.com/');
 }
 
-const genAI = new GoogleGenAI({ apiKey: geminiKey || '' });
+const genAI = new GoogleGenAI({ apiKey: geminiKey || 'dummy_key_for_offline' });
 const openai = new OpenAI({
     apiKey: openaiKey || '',
     baseURL: openaiBaseUrl // Will use default if undefined
@@ -96,9 +96,27 @@ let newsCacheSource: 'gdelt' | 'fallback' = 'fallback';
 let newsCacheFetchedAt = 0;
 
 // Helper: Generate text with selected AI provider
-async function generateText(prompt: string): Promise<string> {
+async function generateText(prompt: string, context: string): Promise<string> {
+    // 1. Check for API key presence
+    const hasGemini = geminiKey && geminiKey !== 'your_key_here';
+    const hasOpenAI = openaiKey && openaiKey !== 'your_key_here';
+    const hasKey = aiProvider === 'openai' ? hasOpenAI : hasGemini;
+
+    // 2. If no key, try cache first
+    if (!hasKey) {
+        console.log(`[AI] No API key. Checking cache for context: ${context}`);
+        const cached = getCachedContent(context);
+        if (cached) {
+            console.log('[AI] Cache HIT!');
+            return cached;
+        }
+        console.log('[AI] Cache MISS. Returning empty string (will trigger fallback).');
+        return '';
+    }
+
+    // 3. Generate content
+    let text = '';
     if (aiProvider === 'openai') {
-        // Build request body - only include max_tokens if configured
         const requestBody: any = {
             model: openaiModel,
             messages: [{ role: 'user' as const, content: prompt }]
@@ -117,14 +135,20 @@ async function generateText(prompt: string): Promise<string> {
         }
 
         const response = await openai.chat.completions.create(requestBody);
-        return response.choices[0]?.message?.content || '';
+        text = response.choices[0]?.message?.content || '';
     } else {
         const response = await genAI.models.generateContent({
             model: 'gemini-2.5-flash',
             contents: prompt
         });
-        return response.text || '';
+        text = response.text || '';
     }
+
+    // 4. Cache the result if successful
+    if (text) {
+        saveGeneratedContent(context, text);
+    }
+    return text;
 }
 
 function normalizeHeadline(text: string) {
@@ -477,11 +501,8 @@ app.delete('/api/worms/:id/words', (req, res) => {
 app.post('/api/thought', async (req, res) => {
     const { vocab } = req.body;
 
-    if ((aiProvider === 'gemini' && (!geminiKey || geminiKey === 'your_key_here')) ||
-        (aiProvider === 'openai' && (!openaiKey || openaiKey === 'your_key_here'))) {
-        console.log('[THOUGHT] API key not configured, returning fallback');
-        return res.status(503).json({ error: 'Brain missing (No API Key)' });
-    }
+
+
 
     if (!vocab || !Array.isArray(vocab)) {
         console.error('[THOUGHT] Invalid request: vocab must be an array, got:', typeof vocab);
@@ -491,7 +512,7 @@ app.post('/api/thought', async (req, res) => {
     try {
         console.log('[THOUGHT] Generating thought for vocab:', vocab.slice(0, 5));
         const prompt = `I have eaten these words: [${vocab.join(', ')}]. Respond as a lively blob. 1. ONLY use words from list or Japanese kaomoji (顏文字 like (o^^o), (´ω｀)). 2. NO standard emojis. 3. Be happy. 4. 1-4 words. 5. No explanation. 6. Use repeats.`;
-        const text = await generateText(prompt);
+        const text = await generateText(prompt, 'thought');
         console.log('[THOUGHT] Success:', text);
         res.json({ text: text || '...' });
     } catch (err: any) {
@@ -509,16 +530,8 @@ app.post('/api/thought', async (req, res) => {
 app.post('/api/split-words', async (req, res) => {
     const { words } = req.body;
 
-    if ((aiProvider === 'gemini' && (!geminiKey || geminiKey === 'your_key_here')) ||
-        (aiProvider === 'openai' && (!openaiKey || openaiKey === 'your_key_here'))) {
-        console.log('[SPLIT] API key not configured, using random split');
-        const shuffled = [...words].sort(() => Math.random() - 0.5);
-        const mid = Math.max(1, Math.floor(shuffled.length / 2));
-        return res.json({
-            bucket1: shuffled.slice(0, mid),
-            bucket2: shuffled.slice(mid)
-        });
-    }
+
+
     if (!words || words.length < 2) {
         return res.json({ bucket1: [words[0]], bucket2: [] });
     }
@@ -537,7 +550,7 @@ Rules:
 
 JSON:`;
 
-        const text = await generateText(prompt);
+        const text = await generateText(prompt, 'split');
         console.log('[SPLIT] AI response:', text);
         // Try to extract JSON
         const jsonMatch = text.trim().match(/\{[\s\S]*\}/);
@@ -587,19 +600,16 @@ JSON:`;
 
 // Name Worm
 app.post('/api/name-worm', async (req, res) => {
+
+
     const { words } = req.body;
 
-    if ((aiProvider === 'gemini' && (!geminiKey || geminiKey === 'your_key_here')) ||
-        (aiProvider === 'openai' && (!openaiKey || openaiKey === 'your_key_here'))) {
-        console.log('[NAMING] API key not configured, using fallback name');
-        return res.json({ name: 'blob' });
-    }
 
     try {
         console.log('[NAMING] Generating name for words:', words.slice(0, 5));
         const prompt = `Words: ${words.join(', ')}. Generate ONE poetic word capturing their essence. Word only:`;
 
-        const text = await generateText(prompt);
+        const text = await generateText(prompt, 'name');
         const name = text.trim().toLowerCase().replace(/[^a-z]/g, '') || 'blob';
         console.log('[NAMING] ✅ Generated name:', name);
         res.json({ name: name || 'blob' });
@@ -627,24 +637,16 @@ app.get('/api/world-text', (req, res) => {
 
 // 5. Generate New Paragraphs (AI)
 app.post('/api/generate-paragraphs', async (req, res) => {
+
+
     const { count = 3 } = req.body;
 
-    if ((aiProvider === 'gemini' && (!geminiKey || geminiKey === 'your_key_here')) ||
-        (aiProvider === 'openai' && (!openaiKey || openaiKey === 'your_key_here'))) {
-        console.log('[GENERATE] API key not configured, returning fallback paragraphs');
-        const fallbackParagraphs = [
-            "Words drift through the void seeking meaning.",
-            "The worm knows hunger and the taste of language.",
-            "Between letters lies the unspoken truth."
-        ];
-        return res.json({ paragraphs: fallbackParagraphs.slice(0, count) });
-    }
 
     try {
         console.log(`[GENERATE] Generating ${count} new paragraphs...`);
         const prompt = `Generate ${count} philosophical single-sentence paragraphs about language, words, meaning, and digital consciousness. Each should be poetic and thought-provoking. Format as JSON array: ["sentence1", "sentence2", "sentence3"]`;
 
-        const text = await generateText(prompt);
+        const text = await generateText(prompt, 'paragraphs');
         console.log('[GENERATE] AI response:', text);
 
         // Try to extract JSON array

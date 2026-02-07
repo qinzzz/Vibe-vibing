@@ -27,6 +27,13 @@ db.exec(`
     eatenAt DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (worm_id) REFERENCES worms(id)
   );
+
+  CREATE TABLE IF NOT EXISTS generated_content (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    context TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 
 // Worm Management
@@ -110,6 +117,27 @@ export const deleteWormWords = (wormId: string) => {
 export const clearStomach = () => {
   db.prepare('DELETE FROM stomach').run();
   db.prepare('DELETE FROM worms').run();
+  db.prepare('DELETE FROM generated_content').run();
+};
+
+export const saveGeneratedContent = (context: string, content: string) => {
+  try {
+    const stmt = db.prepare('INSERT INTO generated_content (context, content) VALUES (?, ?)');
+    stmt.run(context, content);
+  } catch (err) {
+    console.error('[DB] Failed to cache content:', err);
+  }
+};
+
+export const getCachedContent = (context: string): string | null => {
+  try {
+    const stmt = db.prepare('SELECT content FROM generated_content WHERE context = ? ORDER BY RANDOM() LIMIT 1');
+    const row = stmt.get(context) as { content: string } | undefined;
+    return row ? row.content : null;
+  } catch (err) {
+    console.error('[DB] Failed to get cached content:', err);
+    return null;
+  }
 };
 
 export default db;
