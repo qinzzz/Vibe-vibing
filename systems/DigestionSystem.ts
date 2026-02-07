@@ -49,8 +49,9 @@ export class DigestionSystem implements System {
         this.engine.events.on(EVENTS.WORD_REMOVED, this.handleWordRemoved);
         this.engine.events.on(EVENTS.READY_TO_REPRODUCE, this.handleReproductionReady);
         this.engine.events.on(EVENTS.REPRODUCE_TRIGGERED, this.handleReproduceTrigger);
-        this.engine.events.on(EVENTS.FORCE_MOOD, this.handleForceMood);
+        this.engine.events.emit(EVENTS.FORCE_MOOD, this.handleForceMood);
         this.engine.events.on('INPUT_START', this.handleInput);
+        this.engine.events.on('INPUT_RELEASE', this.handleReleaseInput);
 
         this.hydrateStomach(3); // Start hydration with retries
     }
@@ -82,6 +83,34 @@ export class DigestionSystem implements System {
                 word.stirOffset.y += (dy / len) * stirStrength + (Math.random() - 0.5) * 60;
             });
             this.engine.events.emit(EVENTS.SFX_MUNCH, {}); // Reuse sound for feedback
+        }
+    };
+
+    private handleReleaseInput = (pos: { x: number, y: number }) => {
+        const worm = this.engine.activeWorm;
+
+        // Find pressed word
+        const clickedWord = worm.swallowedWords.find(w => {
+            const dist = Math.hypot(pos.x - w.pos.x, pos.y - w.pos.y);
+            return dist < 25; // Approx radius of interaction
+        });
+
+        if (clickedWord) {
+            console.log(`[RELEASE] Releasing word: ${clickedWord.text}`);
+
+            // 1. Remove from backend
+            fetch(`/api/stomach/${clickedWord.id}`, { method: 'DELETE' })
+                .then(res => {
+                    if (res.ok) {
+                        // 2. Emit removal event (updates local state)
+                        this.engine.events.emit(EVENTS.WORD_REMOVED, clickedWord.id);
+
+                        // 3. Feedback
+                        this.engine.events.emit(EVENTS.SFX_MUNCH, {});
+                        // TODO: dedicated "poof" sound/particle
+                    }
+                })
+                .catch(err => console.error("Failed to release word:", err));
         }
     };
 

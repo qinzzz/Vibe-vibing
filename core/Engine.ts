@@ -56,6 +56,7 @@ export class Engine {
         this.canvas.addEventListener('touchstart', this.handleInput);
         this.canvas.addEventListener('mousemove', this.handleMouseMove);
         this.canvas.addEventListener('touchmove', this.handleMouseMove);
+        this.canvas.addEventListener('contextmenu', e => e.preventDefault()); // Prevent default menu
         window.addEventListener('keydown', this.handleKeyDown);
 
         // Create initial worm
@@ -173,9 +174,21 @@ export class Engine {
         this.mouseScreenPos = screenPos;
         const worldPos = this.screenToWorld(screenPos);
 
-        this.activeWorm.targetPos = worldPos;
-        this.targetPos = worldPos;
-        this.events.emit('INPUT_START', worldPos);
+        // Check for Right Click (button 2) or Shift+Click
+        let isSecondary = false;
+        if (e instanceof MouseEvent) {
+            if (e.button === 2 || e.shiftKey) {
+                isSecondary = true;
+            }
+        }
+
+        if (isSecondary) {
+            this.events.emit('INPUT_RELEASE', worldPos);
+        } else {
+            this.activeWorm.targetPos = worldPos;
+            this.targetPos = worldPos;
+            this.events.emit('INPUT_START', worldPos);
+        }
     };
 
     private handleMouseMove = (e: MouseEvent | TouchEvent) => {
