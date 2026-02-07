@@ -82,14 +82,44 @@ Functionality:
 * Added toggleable weather/debug modes for experimentation.
 * Added support for real text streams (news, poetry, subreddit thoughts) with slow-refresh ambient behavior.
 
+### Day 4 - Steve
+
+Functionality:
+
+* **Visual Evolution**: The worm's physical form now reacts dynamically to its **Words**, **Mood** and **Soul**. Enhancements include specific colors and particle effects for different emotional states (e.g., Electric, Serene, Irritable).
+* **Dynamic Motto**: The worm's motto is now procedurally generated based on its current personality and mood, giving it a unique voice.
+* **Stream Diversity**: Expanded the "Linguistic Ecology" with AI-generated "Void Debris" featuring distinct eras to prevent repetition.
+* **Word Release**: Right-click (or double-click on Mac) a swallowed word to release it back into the void.
+* **Worm Settings**: Added a settings popover allowing users to observe the worm's current state and set the worm's mood or aesthetic preferences.
+* **Decluttering**: Optimized performance and visuals by automatically removing eaten words from the scene.
+
+Performance:
+
+* **Canvas Rendering**:
+  * Removed expensive `shadowBlur` from text rendering, replacing it with high-contrast color shifts for better FPS.
+  * Implemented **AABB (Axis-Aligned Bounding Box)** checks for broad-phase collision detection in the Stream of Consciousness.
+  * Added visibility-based gradient caching to minimize redundant radial gradient creation.
+* **Math Optimizations**:
+  * Pre-calculated squared radii in Marching Squares (metaball skinning) to avoid expensive `Math.sqrt` and exponentiation in the hot path.
+* **Diagnostics**:
+  * Added a database inspector (`server/inspect_db.ts`) to monitor table growth and verify query plans for LLM caching.
+
+Infra:
+
+* **Snapshot System**:
+  * `glutton.db` is now **untracked** to prevent merge conflicts.
+  * **Usage**: On startup, if `glutton.db` is missing, it is automatically restored from `glutton.snapshot.db`.
+  * **Reset**: To reset your worm, simply delete `server/glutton.db` and restart.
+  * **Share**: To commit a specific world state, copy your `server/glutton.db` to `server/glutton.snapshot.db`.
+* **Offline / No-Key Support**:
+  * The app now supports a **Replay Mode** when no API key is provided. It will serve cached AI responses instead of failing, allowing the app to run offline or for users without keys.
+  * Implemented cache limits to prevent bloated database sizes.
+
 ## 🛤 Future Roadmap (Suggested Steps)
 We are constantly looking to evolve the Glutton's consciousness. Some planned/suggested enhancements include:
-- [ ] **Dynamic Background Generation**: Transition from static word fragments to real-time AI-generated "void debris" based on the Glutton's mood.
-- [ ] **Visual Evolution**: Modify the Glutton's color, size, or skin thickness based on the *complexity* or *sentiment* of the words it consumes.
 - [ ] **Ambient Soundscapes**: Procedural background music that shifts in key/tempo as the stomach fills.
-- [ ] **Environment**: Can we add good sources of text? Are there other environmental elements to add?
-- [ ] **Multi-Blob Interaction**: What happens when two Gluttons meet in the void?
-- [ ] **Blob Behavior**: Glutton now has a soul, how might these traits change its appearance or behavior?
+- [x] **Advanced Visual Evolution**: Secondary mutations and skin properties (transparency, glow, texture) based on long-term linguistic history.
+- [x] **Linguistic Ecology**: Exploring deeper and more diverse sources of text (literary corpora, specialized API streams, real-time user-provided documents).
 
 ## 💡 Contributions & Tweaks
 This is an open experiment. **Any tweaks, design changes, or bug fixes are highly welcomed!** 
@@ -97,4 +127,3 @@ Feel free to refactor the physics, adjust the AI prompts, or polish the UI. This
 
 ---
 *Created as an exploration of generative personality and digital-organic synergy.*
-

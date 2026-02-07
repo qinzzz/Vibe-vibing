@@ -56,6 +56,7 @@ export class Engine {
         this.canvas.addEventListener('touchstart', this.handleInput);
         this.canvas.addEventListener('mousemove', this.handleMouseMove);
         this.canvas.addEventListener('touchmove', this.handleMouseMove);
+        this.canvas.addEventListener('contextmenu', e => e.preventDefault()); // Prevent default menu
         window.addEventListener('keydown', this.handleKeyDown);
 
         // Create initial worm
@@ -173,9 +174,21 @@ export class Engine {
         this.mouseScreenPos = screenPos;
         const worldPos = this.screenToWorld(screenPos);
 
-        this.activeWorm.targetPos = worldPos;
-        this.targetPos = worldPos;
-        this.events.emit('INPUT_START', worldPos);
+        // Check for Right Click (button 2) or Shift+Click
+        let isSecondary = false;
+        if (e instanceof MouseEvent) {
+            if (e.button === 2 || e.shiftKey) {
+                isSecondary = true;
+            }
+        }
+
+        if (isSecondary) {
+            this.events.emit('INPUT_RELEASE', worldPos);
+        } else {
+            this.activeWorm.targetPos = worldPos;
+            this.targetPos = worldPos;
+            this.events.emit('INPUT_START', worldPos);
+        }
     };
 
     private handleMouseMove = (e: MouseEvent | TouchEvent) => {
@@ -202,7 +215,8 @@ export class Engine {
 
             // Inherit with mutations
             hue: parent ? (parent.hue + (Math.random() - 0.5) * 30) % 360 : 200, // Start blue
-            sizeMultiplier: parent ? parent.sizeMultiplier * (0.95 + Math.random() * 0.1) : 1.0,
+            sizeMultiplier: parent ? this.clamp(parent.sizeMultiplier * (0.95 + Math.random() * 0.1), 0.6, 1.8) : 1.0,
+            thickness: parent ? this.clamp(parent.thickness * (0.95 + Math.random() * 0.1), 0.15, 0.5) : 0.25,
             speedMultiplier: parent ? parent.speedMultiplier * (0.95 + Math.random() * 0.1) : 1.0,
 
             // Lifecycle
@@ -221,7 +235,8 @@ export class Engine {
             vocabulary: new Set(parent ? this.inheritVocabulary(parent) : []),
             swallowedWords: [],
             digestionQueue: [],
-            soul: this.createInitialSoul(parent)
+            soul: this.createInitialSoul(parent),
+            particles: []
         };
 
         this.wormState.worms.set(id, worm);

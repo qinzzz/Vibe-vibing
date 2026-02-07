@@ -1,7 +1,20 @@
 import Database from 'better-sqlite3';
 import path from 'path';
+import fs from 'fs';
 
 const dbPath = path.resolve(__dirname, 'glutton.db');
+const snapshotPath = path.resolve(__dirname, 'glutton.snapshot.db');
+
+// Initialize DB from snapshot if needed
+if (!fs.existsSync(dbPath)) {
+  if (fs.existsSync(snapshotPath)) {
+    console.log('Creating fresh glutton.db from snapshot...');
+    fs.copyFileSync(snapshotPath, dbPath);
+  } else {
+    console.log('No snapshot found, creating clean glutton.db...');
+  }
+}
+
 const db = new Database(dbPath);
 
 // Initialize Tables
@@ -13,6 +26,7 @@ db.exec(`
     parent_id TEXT,
     hue INTEGER NOT NULL,
     size_multiplier REAL NOT NULL,
+    thickness REAL DEFAULT 0.25,
     speed_multiplier REAL NOT NULL,
     birth_time INTEGER NOT NULL,
     satiation REAL NOT NULL,
@@ -27,7 +41,32 @@ db.exec(`
     eatenAt DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (worm_id) REFERENCES worms(id)
   );
+
+  CREATE TABLE IF NOT EXISTS generated_content (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    context TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS thought_fragments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    text TEXT NOT NULL UNIQUE,
+    era TEXT NOT NULL, -- 'pre_ai' or 'post_ai'
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
 `);
+
+// Auto-Migration: Add thickness column if missing (for existing DBs)
+try {
+  const tableInfo = db.pragma('table_info(worms)') as Array<{ name: string }>;
+  if (!tableInfo.some(col => col.name === 'thickness')) {
+    console.log('[DB] Migrating: Adding thickness column to worms table...');
+    db.exec('ALTER TABLE worms ADD COLUMN thickness REAL DEFAULT 0.25');
+  }
+} catch (err) {
+  console.error('[DB] Migration check failed:', err);
+}
 
 // Worm Management
 export const saveWorm = (worm: {
@@ -37,6 +76,7 @@ export const saveWorm = (worm: {
   parentId: string | null;
   hue: number;
   sizeMultiplier: number;
+  thickness: number;
   speedMultiplier: number;
   birthTime: number;
   satiation: number;
@@ -45,8 +85,8 @@ export const saveWorm = (worm: {
 }) => {
   const stmt = db.prepare(`
     INSERT OR REPLACE INTO worms
-    (id, name, generation, parent_id, hue, size_multiplier, speed_multiplier, birth_time, satiation, health, last_meal)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (id, name, generation, parent_id, hue, size_multiplier, thickness, speed_multiplier, birth_time, satiation, health, last_meal)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   stmt.run(
     worm.id,
@@ -55,6 +95,7 @@ export const saveWorm = (worm: {
     worm.parentId,
     worm.hue,
     worm.sizeMultiplier,
+    worm.thickness,
     worm.speedMultiplier,
     worm.birthTime,
     worm.satiation,
@@ -72,6 +113,7 @@ export const getWorms = () => {
     parent_id: string | null;
     hue: number;
     size_multiplier: number;
+    thickness: number;
     speed_multiplier: number;
     birth_time: number;
     satiation: number;
@@ -110,6 +152,123 @@ export const deleteWormWords = (wormId: string) => {
 export const clearStomach = () => {
   db.prepare('DELETE FROM stomach').run();
   db.prepare('DELETE FROM worms').run();
+  db.prepare('DELETE FROM generated_content').run();
 };
+
+const MAX_CACHE_PER_CONTEXT = 50;
+
+export const saveGeneratedContent = (context: string, content: string) => {
+  try {
+    // 1. Insert new content
+    const stmt = db.prepare('INSERT INTO generated_content (context, content) VALUES (?, ?)');
+    stmt.run(context, content);
+
+    // 2. Check and enforce limit
+    const countStmt = db.prepare('SELECT COUNT(*) as count FROM generated_content WHERE context = ?');
+    const result = countStmt.get(context) as { count: number };
+
+    if (result.count > MAX_CACHE_PER_CONTEXT) {
+      // Delete oldest
+      const deleteStmt = db.prepare(`
+        DELETE FROM generated_content 
+        WHERE id IN (
+          SELECT id FROM generated_content 
+          WHERE context = ? 
+          ORDER BY created_at ASC 
+          LIMIT ?
+        )
+      `);
+      deleteStmt.run(context, result.count - MAX_CACHE_PER_CONTEXT);
+    }
+  } catch (err) {
+    console.error('[DB] Failed to cache content:', err);
+  }
+};
+
+export const getCachedContent = (context: string): string | null => {
+  try {
+    const stmt = db.prepare('SELECT content FROM generated_content WHERE context = ? ORDER BY RANDOM() LIMIT 1');
+    const row = stmt.get(context) as { content: string } | undefined;
+    return row ? row.content : null;
+  } catch (err) {
+    console.error('[DB] Failed to get cached content:', err);
+    return null;
+  }
+};
+
+// Thought Fragments Management
+export const saveThoughtFragment = (text: string, era: 'pre_ai' | 'post_ai') => {
+  try {
+    const stmt = db.prepare('INSERT OR IGNORE INTO thought_fragments (text, era) VALUES (?, ?)');
+    stmt.run(text, era);
+  } catch (err) {
+    console.error('[DB] Failed to save thought fragment:', err);
+  }
+};
+
+export const getThoughtFragments = (era: 'pre_ai' | 'post_ai', limit: number): string[] => {
+  try {
+    const stmt = db.prepare('SELECT text FROM thought_fragments WHERE era = ? ORDER BY RANDOM() LIMIT ?');
+    const rows = stmt.all(era, limit) as { text: string }[];
+    return rows.map(r => r.text);
+  } catch (err) {
+    console.error('[DB] Failed to get thought fragments:', err);
+    return [];
+  }
+};
+
+export const migrateLegacyThoughts = () => {
+  try {
+    console.log('[DB] Checking for legacy thought migration...');
+    // Migrate Pre-AI
+    const preAiStmt = db.prepare("SELECT content FROM generated_content WHERE context = 'pre_ai_fragments'");
+    const preAiRows = preAiStmt.all() as { content: string }[];
+    let count = 0;
+    for (const row of preAiRows) {
+      try {
+        const fragmentMatch = row.content.trim().match(/\[[\s\S]*\]/);
+        if (fragmentMatch) {
+          const fragments = JSON.parse(fragmentMatch[0]);
+          if (Array.isArray(fragments)) {
+            fragments.forEach((text: string) => {
+              saveThoughtFragment(text, 'pre_ai');
+              count++;
+            });
+          }
+        }
+      } catch (e) { continue; }
+    }
+
+    // Migrate Post-AI
+    const postAiStmt = db.prepare("SELECT content FROM generated_content WHERE context = 'post_ai_fragments'");
+    const postAiRows = postAiStmt.all() as { content: string }[];
+    for (const row of postAiRows) {
+      try {
+        const fragmentMatch = row.content.trim().match(/\[[\s\S]*\]/);
+        if (fragmentMatch) {
+          const fragments = JSON.parse(fragmentMatch[0]);
+          if (Array.isArray(fragments)) {
+            fragments.forEach((text: string) => {
+              saveThoughtFragment(text, 'post_ai');
+              count++;
+            });
+          }
+        }
+      } catch (e) { continue; }
+    }
+
+    if (count > 0) {
+      console.log(`[DB] Migrated ${count} legacy thoughts to individual fragments.`);
+      // Optional: Clear old cache to prevent double usage, or keep as backup. 
+      // decided to keep generated_content as is for now as a fallback/record
+    }
+
+  } catch (err) {
+    console.error('[DB] Legacy migration failed:', err);
+  }
+};
+
+// Run migration on startup
+migrateLegacyThoughts();
 
 export default db;

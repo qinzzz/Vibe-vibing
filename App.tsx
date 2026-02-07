@@ -66,8 +66,8 @@ const App: React.FC = () => {
       const count = Array.isArray(payload?.headlines) ? payload.headlines.length : 0;
       const titles = Array.isArray(payload?.headlines)
         ? payload.headlines
-            .map((item: any) => (typeof item?.title === 'string' ? item.title.trim() : ''))
-            .filter((title: string) => title.length > 0)
+          .map((item: any) => (typeof item?.title === 'string' ? item.title.trim() : ''))
+          .filter((title: string) => title.length > 0)
         : [];
       if (titles.length > 0) {
         newsHeadlinePoolRef.current = titles;
@@ -177,9 +177,6 @@ const App: React.FC = () => {
     try {
       await fetch('/api/stomach', { method: 'DELETE' });
       setSwallowedWords([]);
-      if (engineRef.current) {
-        engineRef.current.events.emit(EVENTS.STOMACH_CLEAR, {});
-      }
     } catch (e) {
       console.error("Clear failed", e);
     }
@@ -199,6 +196,49 @@ const App: React.FC = () => {
     });
   };
 
+  const [hoveredWormId, setHoveredWormId] = useState<string | null>(null);
+
+  const handleMoodInfluence = (mood: string, targetId?: string) => {
+    if (!engineRef.current) return;
+
+    const idToInfluence = targetId || engineRef.current.wormState.activeWormId;
+    console.log('Influencing mood:', mood, 'for worm:', idToInfluence);
+
+    let axes: any = {};
+
+    // Based on DigestionSystem.regenerateIdentity logic
+    // We must set conflicting axes to values that suppress other moods
+    switch (mood) {
+      case 'Serene':
+        // calm + hopeful + tender. Suppress bold/irritability.
+        axes = { calm: 0.9, hopeful: 0.7, tender: 0.8, bold: -0.8, social: 0, focused: 0 };
+        break;
+      case 'Watchful':
+        // focused + curious - social. Suppress orderly to avoid Analytical.
+        axes = { focused: 0.9, curious: 0.7, social: -0.8, calm: 0.2, bold: -0.2, orderly: 0, poetic: 0 };
+        break;
+      case 'Playful':
+        // bold + curious - orderly. Suppress social to avoid Electric.
+        axes = { bold: 0.8, curious: 0.8, orderly: -0.9, social: -0.4, calm: -0.2, tender: 0.4 };
+        break;
+      case 'Wistful':
+        // -hopeful + poetic. Suppress focused to avoid Contemplative.
+        axes = { hopeful: -0.9, poetic: 0.9, calm: 0.3, bold: -0.5, focused: -0.4, social: -0.2 };
+        break;
+      case 'Irritable':
+        // -tender - calm. Suppress curious.
+        axes = { tender: -0.9, calm: -0.9, bold: 0.6, social: -0.6, hopeful: -0.3, curious: 0 };
+        break;
+      case 'Electric':
+        // bold + curious + social. Suppress orderly to hurt Playful (but wait, Playful needs LOW orderly). 
+        // Also boost Social to max.
+        axes = { bold: 0.9, curious: 0.8, social: 0.9, orderly: 0.4, calm: -0.8, poetic: -0.5, tender: -0.2 };
+        break;
+    }
+
+    engineRef.current.events.emit(EVENTS.FORCE_MOOD, { wormId: idToInfluence, axes });
+  };
+
   return (
     <div className="relative w-full h-screen bg-black overflow-hidden flex flex-col">
       <div className="absolute top-6 left-1/2 -translate-x-1/2 z-10 pointer-events-none text-center">
@@ -216,62 +256,212 @@ const App: React.FC = () => {
         onEngineInit={handleEngineInit}
       />
 
-      {/* Worm Selector UI - Moved to Bottom */}
-      {worms.length > 1 && (
-        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-30 flex gap-2 pointer-events-auto">
-          <div className="bg-black/80 backdrop-blur-md px-3 py-2 rounded-lg border border-white/10">
-            <div className="text-white/50 text-[10px] uppercase tracking-widest mb-2">
-              Worms ({worms.length})
-            </div>
-            <div className="flex gap-2">
-              {worms.map(worm => {
-                const isActive = worm.id === activeWormId;
-                return (
-                  <button
-                    key={worm.id}
-                    onClick={() => switchWorm(worm.id)}
-                    className={`px-3 py-2 rounded-md transition-all duration-200 ${
-                      isActive
-                        ? 'bg-white/20 border-2'
-                        : 'bg-black/60 border border-white/10 hover:bg-white/10'
-                    }`}
-                    style={{
-                      borderColor: isActive ? `hsl(${worm.hue}, 50%, 50%)` : undefined,
-                    }}
-                  >
-                    <div className="flex items-center gap-2">
-                      <div
-                        className="w-3 h-3 rounded-full"
-                        style={{ backgroundColor: `hsl(${worm.hue}, 50%, 50%)` }}
-                      />
-                      <span className="text-white/80 text-xs font-mono">
-                        {worm.name || `Gen ${worm.generation}`}
-                      </span>
-                      <span className="text-white/60 text-[10px]">
-                        {worm.vocabulary.size}w
-                      </span>
+      {/* Worm Selector UI - Bottom Center */}
+
+      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-30 flex gap-2 pointer-events-auto">
+        {worms.map(worm => {
+          const isActive = worm.id === activeWormId;
+          const isHovered = hoveredWormId === worm.id;
+
+          return (
+            <div
+              key={worm.id}
+              className="relative group"
+              onMouseEnter={() => setHoveredWormId(worm.id)}
+              onMouseLeave={() => setHoveredWormId(null)}
+            >
+              {/* Popover Menu */}
+              {(isHovered || (isActive && hoveredWormId === worm.id)) && (
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-3 w-[220px] bg-black/90 backdrop-blur-xl border border-white/20 rounded-xl p-3 shadow-2xl z-50 flex flex-col gap-4 animate-in fade-in slide-in-from-bottom-2 duration-200">
+
+                  {/* Mood Section */}
+                  <div>
+                    <div className="text-[10px] text-white/40 uppercase tracking-wider mb-2 font-bold">Mood</div>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {['Serene', 'Watchful', 'Playful', 'Wistful', 'Irritable', 'Electric'].map(m => (
+                        <button
+                          key={m}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleMoodInfluence(m, worm.id);
+                          }}
+                          className="px-2 py-1.5 bg-white/5 border border-white/10 rounded text-[10px] text-white/70 hover:bg-white/20 hover:text-blue-300 transition-colors text-center"
+                        >
+                          {m}
+                        </button>
+                      ))}
                     </div>
-                    <div className="mt-1 flex gap-1">
-                      <div className="w-12 h-1 bg-black/40 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-yellow-500"
-                          style={{ width: `${worm.satiation}%` }}
+                  </div>
+
+                  {/* Soul Section */}
+                  <div>
+                    <div className="text-[10px] text-white/40 uppercase tracking-wider mb-2 font-bold flex justify-between">
+                      <span>Soul</span>
+                      <span className="text-[9px] opacity-50">(Personality)</span>
+                    </div>
+                    <div className="space-y-1.5 max-h-[120px] overflow-y-auto custom-scrollbar pr-1">
+                      {Object.entries(worm.soul?.axes || {}).map(([key, value]) => (
+                        <div key={key} className="flex items-center justify-between text-[9px] text-white/60">
+                          <span className="capitalize w-16">{key}</span>
+                          <div className="flex-1 h-1.5 bg-white/10 rounded-full mx-2 relative">
+                            {/* Center line */}
+                            <div className="absolute left-1/2 top-0 bottom-0 w-[1px] bg-white/20"></div>
+                            {/* Bar */}
+                            <div
+                              className={`h-full rounded-full transition-all duration-300 ${Number(value) > 0 ? 'bg-blue-400' : 'bg-amber-400'}`}
+                              style={{
+                                width: `${Math.min(50, Math.abs(Number(value)) * 50)}%`,
+                                left: Number(value) > 0 ? '50%' : undefined,
+                                right: Number(value) <= 0 ? '50%' : undefined
+                              }}
+                            />
+                          </div>
+                          <span className="w-6 text-right font-mono">{(Number(value)).toFixed(1)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Shape Section (Global) */}
+                  <div>
+                    <div className="text-[10px] text-white/40 uppercase tracking-wider mb-2 font-bold flex justify-between">
+                      <span>Shape</span>
+                      <span className="text-[9px] opacity-50">(Global)</span>
+                    </div>
+                    <div className="space-y-3">
+                      <div>
+                        <label className="text-[9px] text-white/60 block mb-1">Core Size</label>
+                        <input
+                          type="range"
+                          min="50" max="300" step="5"
+                          value={params.coreRadius}
+                          onChange={(e) => setParams(p => ({ ...p, coreRadius: Number(e.target.value) }))}
+                          className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer hover:bg-white/20"
                         />
                       </div>
-                      <div className="w-12 h-1 bg-black/40 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-red-500"
-                          style={{ width: `${worm.health}%` }}
+                      <div>
+                        <label className="text-[9px] text-white/60 block mb-1">Hip Size</label>
+                        <input
+                          type="range"
+                          min="30" max="150" step="5"
+                          value={params.hipRadius}
+                          onChange={(e) => setParams(p => ({ ...p, hipRadius: Number(e.target.value) }))}
+                          className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer hover:bg-white/20"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9px] text-white/60 block mb-1">Foot Size</label>
+                        <input
+                          type="range"
+                          min="10" max="150" step="2"
+                          value={params.footRadius}
+                          onChange={(e) => setParams(p => ({ ...p, footRadius: Number(e.target.value) }))}
+                          className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer hover:bg-white/20"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9px] text-white/60 block mb-1">Thickness</label>
+                        <input
+                          type="range"
+                          min="0.05" max="0.9" step="0.01"
+                          value={params.isoThreshold}
+                          onChange={(e) => setParams(p => ({ ...p, isoThreshold: Number(e.target.value) }))}
+                          className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer hover:bg-white/20"
                         />
                       </div>
                     </div>
-                  </button>
-                );
-              })}
+                  </div>
+
+                  {/* Physics Section (Global) */}
+                  <div>
+                    <div className="text-[10px] text-white/40 uppercase tracking-wider mb-2 font-bold flex justify-between">
+                      <span>Physics</span>
+                      <span className="text-[9px] opacity-50">(Global)</span>
+                    </div>
+                    <div className="space-y-3">
+                      <div>
+                        <label className="text-[9px] text-white/60 block mb-1">Speed</label>
+                        <input
+                          type="range"
+                          min="1" max="100" step="1"
+                          value={Math.round(params.coreLerp * 1000)}
+                          onChange={(e) => setParams(p => ({ ...p, coreLerp: Number(e.target.value) / 1000 }))}
+                          className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer hover:bg-white/20"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9px] text-white/60 block mb-1">Foot Grip</label>
+                        <input
+                          type="range"
+                          min="0.05" max="2.0" step="0.05"
+                          value={params.footWeight}
+                          onChange={(e) => setParams(p => ({ ...p, footWeight: Number(e.target.value) }))}
+                          className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer hover:bg-white/20"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[9px] text-white/60 block mb-1">Res (Cell Size)</label>
+                        <input
+                          type="range"
+                          min="4" max="30" step="1"
+                          value={params.cellSize}
+                          onChange={(e) => setParams(p => ({ ...p, cellSize: Number(e.target.value) }))}
+                          className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer hover:bg-white/20"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Arrow */}
+                  <div className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-black/90 border-r border-b border-white/20 rotate-45 transform"></div>
+                </div>
+              )}
+
+              <button
+                onClick={() => switchWorm(worm.id)}
+                className={`relative z-10 px-3 py-2 rounded-md transition-all duration-200 ${isActive
+                  ? 'bg-white/20 border-2'
+                  : 'bg-black/60 border border-white/10 hover:bg-white/10'
+                  }`}
+                style={{
+                  borderColor: isActive ? `hsl(${worm.hue}, 50%, 50%)` : undefined,
+                }}
+              >
+                <div className="flex items-center gap-2">
+                  <div
+                    className="w-3 h-3 rounded-full shadow-[0_0_8px_rgba(255,255,255,0.3)]"
+                    style={{ backgroundColor: `hsl(${worm.hue}, 60%, 55%)` }}
+                  />
+                  <div className="flex flex-col items-start min-w-[80px]">
+                    <span className={`text-[12px] font-bold font-mono leading-none mb-1 ${isActive ? 'text-white' : 'text-white/70'}`}>
+                      {worm.name || `Worm ${worm.generation + 1}`}
+                    </span>
+                    <span className="text-[10px] text-blue-300 font-medium uppercase tracking-wider leading-none">
+                      {worm.soul?.identity?.mood || 'Waking...'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Stats Bars */}
+                <div className="mt-2 flex gap-1 w-full opacity-80">
+                  <div className="h-1 flex-1 bg-white/10 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-amber-400"
+                      style={{ width: `${worm.satiation}%` }}
+                    />
+                  </div>
+                  <div className="h-1 flex-1 bg-white/10 rounded-full overflow-hidden relative">
+                    <div
+                      className="h-full bg-rose-500 absolute left-0 top-0"
+                      style={{ width: `${worm.health}%` }}
+                    />
+                  </div>
+                </div>
+              </button>
             </div>
-          </div>
-        </div>
-      )}
+          );
+        })}
+      </div>
 
       <div className={`absolute top-0 left-0 h-full z-20 transition-transform duration-300 ease-in-out ${isLeftOpen ? 'translate-x-0' : '-translate-x-[260px]'}`}>
         <button
@@ -318,13 +508,15 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      {!isLeftOpen && (
-        <div className="absolute left-6 top-1/2 -translate-y-28 -rotate-90 origin-left z-30 pointer-events-none">
-          <div className="text-[10px] text-white/30 font-mono-custom tracking-[0.3em] whitespace-nowrap uppercase">
-            STOMACH: {swallowedWords.length}
+      {
+        !isLeftOpen && (
+          <div className="absolute left-6 top-1/2 -translate-y-28 -rotate-90 origin-left z-30 pointer-events-none">
+            <div className="text-[10px] text-white/30 font-mono-custom tracking-[0.3em] whitespace-nowrap uppercase">
+              STOMACH: {swallowedWords.length}
+            </div>
           </div>
-        </div>
-      )}
+        )
+      }
 
       <div className={`absolute top-0 right-0 h-full z-20 transition-transform duration-300 ease-in-out ${isRightOpen ? 'translate-x-0' : 'translate-x-[280px]'}`}>
         <button
@@ -425,94 +617,30 @@ const App: React.FC = () => {
             />
           </ControlGroup>
 
-          <ControlGroup title="Visibility">
-            <Toggle
-              label="Show Skeleton"
-              value={params.showSkeleton}
-              onChange={(v: boolean) => setParams(p => ({ ...p, showSkeleton: v }))}
-            />
-          </ControlGroup>
 
-          <ControlGroup title="Locomotion & IK">
-            <Slider
-              label="Upper Leg (L1)"
-              value={params.l1} min={20} max={100} step={1}
-              onChange={(v: number) => setParams(p => ({ ...p, l1: v }))}
-            />
-            <Slider
-              label="Lower Leg (L2)"
-              value={params.l2} min={20} max={100} step={1}
-              onChange={(v: number) => setParams(p => ({ ...p, l2: v }))}
-            />
-            <Slider
-              label="Step Trigger"
-              value={params.stepTrigger} min={30} max={150} step={5}
-              onChange={(v: number) => setParams(p => ({ ...p, stepTrigger: v }))}
-            />
-          </ControlGroup>
 
-          <ControlGroup title="Metaball Radius">
-            <Slider
-              label="Core Radius"
-              value={params.coreRadius} min={50} max={300} step={5}
-              onChange={(v: number) => setParams(p => ({ ...p, coreRadius: v }))}
-            />
-            <Slider
-              label="Hip Radius"
-              value={params.hipRadius} min={30} max={150} step={5}
-              onChange={(v: number) => setParams(p => ({ ...p, hipRadius: v }))}
-            />
-            <Slider
-              label="Foot Radius"
-              value={params.footRadius} min={10} max={150} step={2}
-              onChange={(v: number) => setParams(p => ({ ...p, footRadius: v }))}
-            />
-          </ControlGroup>
 
-          <ControlGroup title="Field Weights">
-            <Slider
-              label="Movement Speed"
-              value={Math.round(params.coreLerp * 1000)} min={1} max={100} step={1}
-              onChange={(v: number) => setParams(p => ({ ...p, coreLerp: v / 1000 }))}
-            />
-            <Slider
-              label="Skin Thickness (ISO)"
-              value={params.isoThreshold} min={0.05} max={0.9} step={0.01}
-              onChange={(v: number) => setParams(p => ({ ...p, isoThreshold: v }))}
-            />
-            <Slider
-              label="Foot Strength"
-              value={params.footWeight} min={0.05} max={2.0} step={0.05}
-              onChange={(v: number) => setParams(p => ({ ...p, footWeight: v }))}
-            />
-          </ControlGroup>
-
-          <ControlGroup title="Resolution">
-            <Slider
-              label="Cell Size"
-              value={params.cellSize} min={4} max={30} step={1}
-              onChange={(v: number) => setParams(p => ({ ...p, cellSize: v }))}
-            />
-          </ControlGroup>
         </div>
       </div>
 
       {/* Reproduction Freeze Overlay */}
-      {isReproducing && (
-        <div className="absolute inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center pointer-events-auto">
-          <div className="text-center">
-            <div className="text-white text-xl font-mono-custom mb-4 animate-pulse">
-              splitting...
-            </div>
-            <div className="flex gap-2 justify-center">
-              <div className="w-3 h-3 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0s' }}></div>
-              <div className="w-3 h-3 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
-              <div className="w-3 h-3 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.4s' }}></div>
+      {
+        isReproducing && (
+          <div className="absolute inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center pointer-events-auto">
+            <div className="text-center">
+              <div className="text-white text-xl font-mono-custom mb-4 animate-pulse">
+                splitting...
+              </div>
+              <div className="flex gap-2 justify-center">
+                <div className="w-3 h-3 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0s' }}></div>
+                <div className="w-3 h-3 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                <div className="w-3 h-3 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: '0.4s' }}></div>
+              </div>
             </div>
           </div>
-        </div>
-      )}
-    </div>
+        )
+      }
+    </div >
   );
 };
 

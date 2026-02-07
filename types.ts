@@ -91,7 +91,6 @@ export interface SoulAxes {
 
 export interface SoulIdentity {
   mood: string;
-  temperament: string;
   preferences: string[];
   aversions: string[];
   fears: string[];
@@ -101,8 +100,10 @@ export interface SoulIdentity {
 
 export interface WormSoul {
   axes: SoulAxes;
+  targetAxes?: SoulAxes; // For gradual personality shifts
   identity: SoulIdentity;
   motto: string;
+  lastMottoAxes?: SoulAxes; // For tracking motto regeneration triggers
   absorbedCount: number;
 }
 
@@ -145,7 +146,9 @@ export interface Worm {
 
   // Appearance (inherited with mutations)
   hue: number;               // 0-360 for color variation
+  visualColor?: { h: number, s: number, l: number }; // Current interpolated color
   sizeMultiplier: number;    // 0.8-1.2 for size variation
+  thickness: number;         // 0.1-0.5 for skin thickness (isoThreshold)
   speedMultiplier: number;   // Movement speed
 
   // Lifecycle

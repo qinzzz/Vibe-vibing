@@ -29,6 +29,8 @@ export interface SwallowedWord {
     pos: Vector2D;
     rotation: number;
     targetAnchor: 'core' | 'FL' | 'FR' | 'BL' | 'BR';
+    layoutOffset: Vector2D;
+    stirOffset: Vector2D;
     letters: InternalLetter[];
     isComplete: boolean;
 }
@@ -119,7 +121,6 @@ export interface SoulAxes {
 
 export interface SoulIdentity {
     mood: string;
-    temperament: string;
     preferences: string[];
     aversions: string[];
     fears: string[];
@@ -142,6 +143,7 @@ export interface Worm {
     birthTime: number;
     hue: number;
     sizeMultiplier: number;
+    thickness: number; // Added for visual evolution
     speedMultiplier: number;
     satiation: number;
     health: number;
@@ -155,6 +157,20 @@ export interface Worm {
     swallowedWords: SwallowedWord[];
     digestionQueue: DigestionRecord[];
     soul: WormSoul;
+    particles: SoulParticle[];
+    visualColor?: { h: number, s: number, l: number }; // Added for visual evolution
+}
+
+export interface SoulParticle {
+    x: number;
+    y: number;
+    vx: number;
+    vy: number;
+    life: number;
+    maxLife: number;
+    size: number;
+    color: string;
+    type: 'fizz' | 'spark' | 'bubble' | 'dust' | 'heart' | 'tear';
 }
 
 export interface WormState {

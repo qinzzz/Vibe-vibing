@@ -1,7 +1,7 @@
-import { System, Worm } from '../core/types';
+import { System, Worm, SoulParticle } from '../core/types';
 import { Engine } from '../core/Engine';
 import { BLOB_CONSTANTS } from '../constants';
-import { solveIK, lerp } from '../utils/physics';
+import { solveIK, lerp, lerpAngle } from '../utils/physics';
 import { computeField } from '../utils/marchingSquares';
 import { Vector2D } from '../core/types';
 import { EVENTS } from '../core/events';
@@ -48,55 +48,89 @@ export class PhysicsSystem implements System {
 
     update(dt: number) {
         const s = this.engine.config;
-        const core = this.engine.blobState.corePos;
-        const target = this.engine.blobState.targetPos;
-        const speedMultiplier = this.engine.blobState.speedMultiplier || 1;
+        const dtSec = dt / 1000;
+
+        this.engine.wormState.worms.forEach(worm => {
+            this.updateWormMovement(worm, dt, s);
+            this.updateParticles(worm, dtSec);
+            this.emitSoulParticles(worm);
+        });
+    }
+
+    private updateWormMovement(worm: Worm, dt: number, s: any) {
+        // Only update movement for active worm or if we add AI later
+        if (worm.id !== this.engine.wormState.activeWormId) return;
+
+        const core = worm.corePos;
+        const target = worm.targetPos;
+        const speedMultiplier = worm.speedMultiplier || 1;
 
         const prevCore = { ...core };
 
-        // Organic idle wobble, strongly damped at close range so nearby targets resolve quickly.
+        // Organic idle wobble
         const time = performance.now() * 0.001;
         const toTargetX = target.x - core.x;
         const toTargetY = target.y - core.y;
         const distToTarget = Math.hypot(toTargetX, toTargetY);
+
+        // Soul-based movement modifiers
+        const axes = worm.soul?.axes || { calm: 0, bold: 0, focused: 0 };
+        const jitter = (axes.bold * 0.8 - axes.calm * 0.4) * 3; // Bold worms jitter MUCH more
+        const smooth = Math.max(0, axes.calm * 0.8 + axes.focused * 0.4); // Calm worms move very smoothly
+
         const targetChanged = !this.lastTarget
             || Math.abs(target.x - this.lastTarget.x) > 0.001
             || Math.abs(target.y - this.lastTarget.y) > 0.001;
+
         if (targetChanged) {
             this.moveStartDistance = distToTarget;
             this.lastTarget = { x: target.x, y: target.y };
         }
 
-        // Short-distance assist only applies for short hops selected by the player.
         const shortHopThreshold = 205;
         const isShortHop = this.moveStartDistance <= shortHopThreshold;
         const nearFactor = isShortHop ? this.clamp(1 - distToTarget / 250, 0, 1) : 0;
-        const wobbleScale = this.clamp((distToTarget - 6) / 220, 0, 1);
-        const wobbleX = (Math.sin(time * 0.7) * 4 + Math.cos(time * 1.3) * 2) * wobbleScale;
-        const wobbleY = (Math.cos(time * 0.8) * 4 + Math.sin(time * 1.1) * 2) * wobbleScale;
 
-        // Adaptive steering: near targets get a strong assist to avoid long short-range glides.
+        // Modify wobble based on soul
+        const baseWobble = this.clamp((distToTarget - 6) / 220, 0, 1);
+        const wobbleScale = baseWobble * (1.5 + jitter); // Increased base wobble
+
+        // Higher frequency wobble for nervous/bold
+        const freq = 1 + (axes.bold * 0.5);
+        const wobbleX = (Math.sin(time * 0.7 * freq) * 6 + Math.cos(time * 1.3 * freq) * 3) * wobbleScale;
+        const wobbleY = (Math.cos(time * 0.8 * freq) * 6 + Math.sin(time * 1.1 * freq) * 3) * wobbleScale;
+
         const closeBoost = lerp(1.2, 7.2, nearFactor);
         const closeAssist = nearFactor * 0.02 * speedMultiplier;
-        const followLerp = this.clamp((s.coreLerp * speedMultiplier * closeBoost) + closeAssist, 0.002, 0.14);
+
+        // Adjusted Lerp for smoothness
+        const baseLerp = (s.coreLerp * speedMultiplier * closeBoost) + closeAssist;
+        const followLerp = this.clamp(baseLerp * (1 - smooth * 0.2), 0.002, 0.14);
+
         const desiredX = target.x + wobbleX;
         const desiredY = target.y + wobbleY;
 
         core.x += (desiredX - core.x) * followLerp;
         core.y += (desiredY - core.y) * followLerp;
 
-        // Tiny snap band for final convergence so "almost there" doesn't linger.
         const postDx = target.x - core.x;
         const postDy = target.y - core.y;
         const remainingDist = Math.hypot(postDx, postDy);
+
         if (isShortHop && remainingDist < 2.2) {
             core.x = target.x;
             core.y = target.y;
         }
-        this.engine.blobState.coreVel = { x: core.x - prevCore.x, y: core.y - prevCore.y };
 
-        const legs = this.engine.blobState.legs;
-        const coreVel = this.engine.blobState.coreVel;
+        worm.coreVel = { x: core.x - prevCore.x, y: core.y - prevCore.y };
+
+        this.updateLegs(worm, s);
+    }
+
+    private updateLegs(worm: Worm, s: any) {
+        const core = worm.corePos;
+        const coreVel = worm.coreVel;
+        const legs = worm.legs;
 
         if (!legs.some(l => l.isStepping)) {
             const leg = legs[this.gaitSequence[this.currentGaitIdx]];
@@ -124,12 +158,122 @@ export class PhysicsSystem implements System {
         });
     }
 
+    private updateParticles(worm: Worm, dt: number) {
+        if (!worm.particles) worm.particles = [];
+
+        for (let i = worm.particles.length - 1; i >= 0; i--) {
+            const p = worm.particles[i];
+            p.life -= dt;
+            if (p.life <= 0) {
+                worm.particles.splice(i, 1);
+                continue;
+            }
+
+            p.x += p.vx * dt * 60;
+            p.y += p.vy * dt * 60;
+
+            // Friction
+            p.vx *= 0.95;
+            p.vy *= 0.95;
+
+            // Behavior by type
+            if (p.type === 'bubble') {
+                p.vy -= 0.02; // Float up
+                p.x += Math.sin(performance.now() * 0.01 + p.y * 0.1) * 0.1;
+            } else if (p.type === 'spark') {
+                p.vy += 0.05; // Gravity
+            } else if (p.type === 'heart') {
+                p.vy -= 0.01;
+                p.size = Math.max(0, p.size - 0.01);
+            } else if (p.type === 'tear') {
+                p.vy += 0.08; // Heavy gravity
+            }
+        }
+    }
+
+    private emitSoulParticles(worm: Worm) {
+        if (!worm.soul) return;
+        const axes = worm.soul.axes;
+        const chance = 0.02; // Base chance per frame
+
+        if (Math.random() > chance) return;
+
+        const core = worm.corePos;
+        const r = this.engine.config.coreRadius * worm.sizeMultiplier;
+
+        // Random position on surface
+        const angle = Math.random() * Math.PI * 2;
+        const x = core.x + Math.cos(angle) * r;
+        const y = core.y + Math.sin(angle) * r;
+
+        const mood = worm.soul?.identity?.mood || 'watchful';
+        const { h, s, l } = this.getMoodColor(mood);
+
+        // Use mood color for particles
+        const particleColor = `hsla(${h}, ${s}%, ${l + 10}%, 0.8)`;
+
+        if (axes.bold > 0.4) {
+            this.addParticle(worm, x, y, 'spark', particleColor);
+        }
+        if (axes.calm > 0.4) {
+            this.addParticle(worm, x, y, 'bubble', particleColor);
+        }
+        if (axes.tender > 0.4) {
+            this.addParticle(worm, x, y, 'heart', particleColor);
+        }
+        if (axes.hopeful < -0.4 || axes.calm < -0.4) {
+            // Dust stays gray-ish but tinted
+            const dustColor = `hsla(${h}, 20%, 60%, 0.6)`;
+            this.addParticle(worm, x, y, 'dust', dustColor);
+        }
+        if (axes.poetic > 0.5) {
+            this.addParticle(worm, x, y, 'fizz', particleColor);
+        }
+    }
+
+    private addParticle(worm: Worm, x: number, y: number, type: SoulParticle['type'], color: string) {
+        worm.particles.push({
+            x, y,
+            vx: (Math.random() - 0.5) * 1.5,
+            vy: (Math.random() - 0.5) * 1.5,
+            life: 1.5 + Math.random(),
+            maxLife: 2.5,
+            size: 2 + Math.random() * 2,
+            type,
+            color
+        });
+    }
+
     draw(ctx: CanvasRenderingContext2D) {
         const s = this.engine.config;
-
-        // Draw all worms
         this.engine.wormState.worms.forEach(worm => {
+            this.drawParticles(ctx, worm);
             this.drawWorm(ctx, worm, s);
+        });
+    }
+
+    private drawParticles(ctx: CanvasRenderingContext2D, worm: Worm) {
+        if (!worm.particles) return;
+
+        worm.particles.forEach(p => {
+            ctx.save();
+            ctx.globalAlpha = p.life / p.maxLife;
+            ctx.fillStyle = p.color;
+            ctx.beginPath();
+
+            if (p.type === 'heart') {
+                // Simple heart shape
+                const size = p.size;
+                ctx.translate(p.x, p.y);
+                ctx.moveTo(0, size * 0.3);
+                ctx.bezierCurveTo(size * 0.5, -size * 0.5, size, 0, 0, size);
+                ctx.bezierCurveTo(-size, 0, -size * 0.5, -size * 0.5, 0, size * 0.3);
+            } else {
+                ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+            }
+
+            ctx.fill();
+            ctx.restore();
         });
     }
 
@@ -137,12 +281,30 @@ export class PhysicsSystem implements System {
         const core = worm.corePos;
         const legs = worm.legs;
 
-        // Calculate worm-specific color
-        const hue = worm.hue;
-        const outlineColor = `hsla(${hue}, 50%, 50%, 0.25)`;
-        const skeletonColor = `hsla(${hue}, 50%, 60%, 0.15)`;
+        // Mood-based Color
+        const mood = worm.soul?.identity?.mood || 'watchful';
+        const { h, s: sat, l } = this.getMoodColor(mood);
 
-        // Apply size multiplier
+        // Initialize or lerp visual color
+        if (!worm.visualColor) {
+            worm.visualColor = { h, s: sat, l };
+        } else {
+            const lerpSpeed = 0.05; // 5% per frame (~3 sec for full transition at 60fps)
+            worm.visualColor.h = lerpAngle(worm.visualColor.h, h, lerpSpeed);
+            worm.visualColor.s = lerp(worm.visualColor.s, sat, lerpSpeed);
+            worm.visualColor.l = lerp(worm.visualColor.l, l, lerpSpeed);
+        }
+
+        // Use interpolated values
+        const renderHue = worm.visualColor.h;
+        const renderSat = worm.visualColor.s;
+        const renderLight = worm.visualColor.l;
+        const finalHue = renderHue; // Alias for skeleton color
+
+        // Color params
+        const outlineColor = `hsla(${renderHue}, ${renderSat}%, ${Math.max(20, renderLight - 20)}%, 0.6)`; // Darker outline
+        const coreColor = `hsla(${renderHue}, ${renderSat}%, ${renderLight}%, 0.4)`;
+
         const coreRadius = s.coreRadius * worm.sizeMultiplier;
         const hipRadius = s.hipRadius * worm.sizeMultiplier;
         const kneeRadius = s.kneeRadius * worm.sizeMultiplier;
@@ -150,7 +312,7 @@ export class PhysicsSystem implements System {
 
         // Draw Skeleton
         if (s.showSkeleton) {
-            ctx.strokeStyle = skeletonColor;
+            ctx.strokeStyle = `hsla(${finalHue}, 50%, 70%, 0.3)`;
             ctx.lineWidth = 1;
             legs.forEach(leg => {
                 const h = { x: core.x + leg.hipOffset.x, y: core.y + leg.hipOffset.y };
@@ -159,31 +321,22 @@ export class PhysicsSystem implements System {
                 ctx.lineTo(leg.kneePos.x, leg.kneePos.y);
                 ctx.lineTo(leg.footPos.x, leg.footPos.y);
                 ctx.stroke();
-                ctx.fillStyle = `hsla(${hue}, 50%, 70%, 0.2)`;
-                [h, leg.kneePos, leg.footPos].forEach(p => {
-                    ctx.beginPath();
-                    ctx.arc(p.x, p.y, 1.5, 0, Math.PI * 2);
-                    ctx.fill();
-                });
             });
-            ctx.beginPath();
-            ctx.arc(core.x, core.y, BLOB_CONSTANTS.FACE_ZONE_RADIUS, 0, Math.PI * 2);
-            ctx.setLineDash([5, 10]);
-            ctx.strokeStyle = `hsla(${hue}, 50%, 60%, 0.1)`;
-            ctx.stroke();
-            ctx.setLineDash([]);
+
+            // Draw Face/Eyes
+            this.drawEyes(ctx, worm, coreRadius);
         }
 
         // Draw Metaballs
-        const metaballPoints: { pos: Vector2D, r: number, w: number }[] = [];
-        metaballPoints.push({ pos: core, r: coreRadius, w: s.coreWeight });
+        const metaballPoints: { pos: Vector2D, r: number, rSq: number, w: number }[] = [];
+        metaballPoints.push({ pos: core, r: coreRadius, rSq: coreRadius * coreRadius, w: s.coreWeight });
         legs.forEach(l => {
             const hip = { x: core.x + l.hipOffset.x, y: core.y + l.hipOffset.y };
-            metaballPoints.push({ pos: hip, r: hipRadius, w: s.hipWeight });
-            metaballPoints.push({ pos: l.kneePos, r: kneeRadius, w: s.kneeWeight });
+            metaballPoints.push({ pos: hip, r: hipRadius * 1.1, rSq: (hipRadius * 1.1) ** 2, w: s.hipWeight });
+            metaballPoints.push({ pos: l.kneePos, r: kneeRadius, rSq: kneeRadius * kneeRadius, w: s.kneeWeight });
             let fr = footRadius;
             if (l.isStepping) fr *= (1 - Math.sin(l.stepProgress * Math.PI) * 0.25);
-            metaballPoints.push({ pos: l.footPos, r: fr, w: s.footWeight });
+            metaballPoints.push({ pos: l.footPos, r: fr, rSq: fr * fr, w: s.footWeight });
         });
 
         // Marching Squares Rendering
@@ -195,7 +348,7 @@ export class PhysicsSystem implements System {
             maxY = Math.max(maxY, p.pos.y + p.r);
         });
 
-        const cellSize = s.cellSize, iso = s.isoThreshold, padding = BLOB_CONSTANTS.METABALL.ROI_PADDING;
+        const cellSize = s.cellSize, iso = worm.thickness ?? s.isoThreshold, padding = BLOB_CONSTANTS.METABALL.ROI_PADDING;
         const gridMinX = Math.floor((minX - padding) / cellSize) * cellSize;
         const gridMinY = Math.floor((minY - padding) / cellSize) * cellSize;
         const cols = Math.floor((Math.ceil((maxX + padding) / cellSize) * cellSize - gridMinX) / cellSize);
@@ -209,10 +362,14 @@ export class PhysicsSystem implements System {
                     gridValues[i][j] = computeField(gridMinX + i * cellSize, gridMinY + j * cellSize, metaballPoints);
                 }
             }
+
             ctx.beginPath();
             ctx.strokeStyle = outlineColor;
             ctx.lineWidth = 1.5;
+            // Also fill slightly for volume
+            ctx.fillStyle = coreColor;
 
+            // Simple Marching Squares drawing loop
             for (let i = 0; i < cols; i++) {
                 for (let j = 0; j < rows; j++) {
                     const x = gridMinX + i * cellSize, y = gridMinY + j * cellSize;
@@ -251,8 +408,80 @@ export class PhysicsSystem implements System {
                 }
             }
             ctx.stroke();
+            // Fill is tricky with lines, skipping fill for now to keep style consistent with original
         }
     }
+
+    private drawEyes(ctx: CanvasRenderingContext2D, worm: Worm, coreRadius: number) {
+        const cx = worm.corePos.x;
+        const cy = worm.corePos.y;
+        const mood = worm.soul?.identity?.mood || 'watchful';
+        const eyeOffset = coreRadius * 0.35;
+        const eyeSize = 2;
+
+        ctx.strokeStyle = `rgba(255, 255, 255, 0.6)`;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+
+        // Left Eye
+        this.drawOneEye(ctx, cx - eyeOffset, cy, mood, true);
+        // Right Eye
+        this.drawOneEye(ctx, cx + eyeOffset, cy, mood, false);
+
+        ctx.stroke();
+    }
+
+    private drawOneEye(ctx: CanvasRenderingContext2D, x: number, y: number, mood: string, isLeft: boolean) {
+        const size = 3;
+        if (mood === 'serene' || mood === 'wistful') {
+            // Closed/Relaxed: - -
+            ctx.moveTo(x - size, y);
+            ctx.lineTo(x + size, y);
+        } else if (mood === 'playful' || mood === 'electric') {
+            // Happy: ^ ^
+            ctx.moveTo(x - size, y + size / 2);
+            ctx.lineTo(x, y - size / 2);
+            ctx.lineTo(x + size, y + size / 2);
+        } else if (mood === 'impatient' || mood === 'irritable') {
+            // Angry: \ /
+            if (isLeft) {
+                ctx.moveTo(x - size, y - size);
+                ctx.lineTo(x + size, y + size / 2);
+            } else {
+                ctx.moveTo(x - size, y + size / 2);
+                ctx.lineTo(x + size, y - size);
+            }
+        } else if (mood === 'contemplative' || mood === 'focused') {
+            // Wide/Round: O
+            ctx.moveTo(x + size, y);
+            ctx.arc(x, y, size, 0, Math.PI * 2);
+        } else {
+            // Default/Watchful: . .
+            ctx.moveTo(x, y);
+            ctx.arc(x, y, 1, 0, Math.PI * 2);
+        }
+    }
+
+    private getMoodColor(mood: string): { h: number, s: number, l: number } {
+        // Distinct color palettes for each mood
+        switch (mood?.toLowerCase()) {
+            case 'serene': return { h: 180, s: 70, l: 75 }; // Cyan/Teal
+            case 'watchful': return { h: 210, s: 80, l: 60 }; // Azure Blue
+            case 'playful': return { h: 45, s: 95, l: 65 }; // Golden Yellow
+            case 'wistful': return { h: 260, s: 60, l: 70 }; // Soft Purple
+            case 'irritable': return { h: 0, s: 85, l: 55 }; // Red
+            case 'electric': return { h: 290, s: 100, l: 60 }; // Neon Magenta/Purple
+            case 'contemplative': return { h: 240, s: 70, l: 65 }; // Deep Blue
+            case 'impatient': return { h: 15, s: 90, l: 60 }; // Orange-Red
+            case 'buoyant': return { h: 320, s: 80, l: 75 }; // Hot Pink
+            case 'mellow': return { h: 150, s: 60, l: 70 }; // Soft Green
+            default: return { h: 0, s: 0, l: 60 }; // Grey fallback
+        }
+    }
+
+    private getSoulHueOffset(axes: any): number { return 0; } // Deprecated
+    private getSoulSaturation(axes: any): number { return 0; } // Deprecated
+    private getSoulLightness(axes: any): number { return 0; } // Deprecated
 
     cleanup() {
         this.engine.events.off(EVENTS.WORM_BORN, this.handleWormBorn);

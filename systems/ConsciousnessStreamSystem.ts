@@ -35,12 +35,14 @@ interface StreamFragment {
     isHovered: boolean;
     hoveredWordIndex: number | null;
     state: StreamFragmentState;
+    maxWidth: number;
 }
 
 interface StreamWord {
     text: string;
     width: number;
     xOffset: number;
+    yOffset: number;
     consumed: boolean;
 }
 
@@ -88,9 +90,12 @@ export class ConsciousnessStreamSystem implements System {
     private particles: StreamParticle[] = [];
     private eddies: StreamEddy[] = [];
     private streamThoughts: StreamThought[] = [];
+    private thoughtDeck: number[] = [];
     private seenThoughtTexts: Set<string> = new Set();
     private thoughtRefreshTimer: number | null = null;
     private isRefreshingThoughts = false;
+    private currentSourceIndex = 0;
+    private sources = ['contemporary']; // Unified contemporary text rotation
 
     private streamBaseY = 0;
     private streamLabelX = 0;
@@ -102,15 +107,15 @@ export class ConsciousnessStreamSystem implements System {
 
     private activeEatTarget: ActiveEatTarget | null = null;
 
-    private readonly FRAGMENT_SPAWN_MIN = 1.25;
-    private readonly FRAGMENT_SPAWN_MAX = 2.15;
+    private readonly FRAGMENT_SPAWN_MIN = 0.25; // Much closer appearance
+    private readonly FRAGMENT_SPAWN_MAX = 0.55;
     private readonly PARTICLE_SPAWN_MIN = 0.02;
     private readonly PARTICLE_SPAWN_MAX = 0.08;
     private readonly EAT_DISTANCE = 70;
     private readonly WORM_INFLUENCE_RADIUS = 180;
     private readonly WARMUP_DURATION = 14; // seconds
-    private readonly THOUGHT_REFRESH_MS = 2 * 60 * 60 * 1000;
-    private readonly THOUGHT_FETCH_LIMIT = 60;
+    private readonly THOUGHT_REFRESH_MS = 20 * 1000;
+    private readonly THOUGHT_FETCH_LIMIT = 10;
 
     init(engine: Engine) {
         this.engine = engine;
@@ -292,7 +297,7 @@ export class ConsciousnessStreamSystem implements System {
                 const dx = b.x - a.x;
                 const dy = b.y - a.y;
                 const dist = Math.hypot(dx, dy);
-                const minDistance = Math.max(84, (a.width + b.width) * 0.26);
+                const minDistance = Math.max(110, (a.width + b.width) * 0.35);
                 if (dist < 0.001 || dist >= minDistance) continue;
 
                 const overlap = minDistance - dist;
@@ -336,6 +341,10 @@ export class ConsciousnessStreamSystem implements System {
         const radius = streamWidth * 0.58;
 
         for (let x = left - 180; x <= right + 180; x += 96) {
+            // Gradient caching - create once if possible, but for now we just minimize ops
+            // Optimization: Only create gradient if within view
+            if (x < left - radius || x > right + radius) continue;
+
             const centerY = this.centerlineY(x, t);
             const gradient = ctx.createRadialGradient(x, centerY, 0, x, centerY, radius);
             gradient.addColorStop(0, 'rgba(98, 164, 228, 0.06)');
@@ -439,45 +448,55 @@ export class ConsciousnessStreamSystem implements System {
             if (opacity < 0.03) continue;
 
             const rotation = this.getFragmentRotation(fragment, t);
+
             const selectedRange = this.activeEatTarget && this.activeEatTarget.fragmentId === fragment.id
                 ? { start: this.activeEatTarget.startWord, end: this.activeEatTarget.endWord }
                 : null;
             const isSelected = Boolean(selectedRange);
             const hoverBoost = fragment.isHovered ? 0.22 : 0;
             const selectedBoost = isSelected ? 0.36 : 0;
+
             const finalAlpha = this.clamp(opacity + hoverBoost + selectedBoost, 0, 0.94);
 
             ctx.save();
             ctx.translate(fragment.x, fragment.y);
             ctx.rotate(rotation);
-            ctx.font = `italic ${fragment.fontSize.toFixed(1)}px monospace`;
-            ctx.shadowColor = isSelected
-                ? `rgba(96, 165, 250, ${this.clamp(finalAlpha * 0.8, 0, 0.65)})`
-                : `rgba(186, 205, 224, ${this.clamp(finalAlpha * 0.45, 0, 0.4)})`;
-            ctx.shadowBlur = isSelected ? 10 : 5;
+
+            // Newspaper font (Stable, legible)
+            ctx.font = `normal italic ${fragment.fontSize.toFixed(1)}px monospace`;
+
+            // OPTIMIZATION: Removed shadowBlur entirely for performance.
+            // Using color shifts and slight opacity boost instead.
+            if (isSelected) {
+                // No shadow, just bright fill
+            } else if (fragment.isHovered) {
+                // No shadow
+            } else {
+                // No shadow
+            }
+
             ctx.fillStyle = isSelected
                 ? `rgba(191, 219, 254, ${finalAlpha})`
                 : fragment.isHovered
                     ? `rgba(147, 197, 253, ${finalAlpha})`
                     : `rgba(238, 244, 249, ${finalAlpha})`;
             const hasConsumedWords = fragment.words.some(word => word.consumed);
-            if (!hasConsumedWords) {
-                ctx.fillText(fragment.text, 0, 0);
-            } else {
-                for (const word of fragment.words) {
-                    if (word.consumed) continue;
-                    ctx.fillText(word.text, word.xOffset, 0);
-                }
+
+            // Render stable word positions from the fragment's stored layout
+            for (const word of fragment.words) {
+                if (word.consumed) continue;
+                ctx.fillText(word.text, word.xOffset, word.yOffset);
             }
 
             // Word-level highlights for interaction while keeping sentence rendered as a coherent line.
             if (fragment.hoveredWordIndex !== null) {
                 const hovered = fragment.words[fragment.hoveredWordIndex];
                 if (hovered && !hovered.consumed) {
-                    ctx.shadowColor = `rgba(125, 177, 245, ${this.clamp(finalAlpha * 0.65, 0, 0.5)})`;
-                    ctx.shadowBlur = 7;
+                    // Optimized: No shadowBlur
+                    // ctx.shadowColor = `rgba(125, 177, 245, ${this.clamp(finalAlpha * 0.65, 0, 0.5)})`;
+                    // ctx.shadowBlur = 7;
                     ctx.fillStyle = `rgba(147, 197, 253, ${this.clamp(finalAlpha, 0, 0.95)})`;
-                    ctx.fillText(hovered.text, hovered.xOffset, 0);
+                    ctx.fillText(hovered.text, hovered.xOffset, hovered.yOffset);
                 }
             }
 
@@ -485,10 +504,11 @@ export class ConsciousnessStreamSystem implements System {
                 for (let wordIndex = selectedRange.start; wordIndex <= selectedRange.end; wordIndex++) {
                     const word = fragment.words[wordIndex];
                     if (!word || word.consumed) continue;
-                    ctx.shadowColor = `rgba(96, 165, 250, ${this.clamp(finalAlpha * 0.78, 0, 0.62)})`;
-                    ctx.shadowBlur = 9;
+                    // Optimized: No shadowBlur
+                    // ctx.shadowColor = `rgba(96, 165, 250, ${this.clamp(finalAlpha * 0.78, 0, 0.62)})`;
+                    // ctx.shadowBlur = 9;
                     ctx.fillStyle = `rgba(191, 219, 254, ${this.clamp(finalAlpha, 0, 0.95)})`;
-                    ctx.fillText(word.text, word.xOffset, 0);
+                    ctx.fillText(word.text, word.xOffset, word.yOffset);
                 }
             }
             ctx.restore();
@@ -541,12 +561,15 @@ export class ConsciousnessStreamSystem implements System {
     private spawnFragment(t: number, scatterAcrossViewport: boolean) {
         const streamWidth = this.getStreamWidth();
         const halfWidth = streamWidth * 0.5;
-        const text = this.pickStreamChunkText();
+        const source = this.pickStreamChunk();
+        const text = source.text;
+        const maxWidth = 200 + Math.random() * 350;
+
         const fontSize = this.randomRange(
             Math.max(12, LAYOUT_CONSTANTS.FONT_SIZE - 3),
             LAYOUT_CONSTANTS.FONT_SIZE
         );
-        const wordLayout = this.layoutFragmentWords(text, fontSize);
+        const wordLayout = this.layoutFragmentWords(text, fontSize, maxWidth);
         const width = wordLayout.totalWidth;
 
         let x = 0;
@@ -562,9 +585,9 @@ export class ConsciousnessStreamSystem implements System {
                 : this.engine.cameraPos.x - this.engine.width / 2 - this.randomRange(120, 320);
 
             const centerY = this.centerlineY(x, t);
-            y = centerY + this.biasedRange(-halfWidth, halfWidth);
+            y = centerY + this.randomRange(-halfWidth * 0.85, halfWidth * 0.85);
 
-            if (!this.isCrowdedAt(x, y, Math.max(82, width * 0.52))) {
+            if (!this.isCrowdedAt(x, y, Math.max(50, width * 0.35))) {
                 placed = true;
                 break;
             }
@@ -578,7 +601,7 @@ export class ConsciousnessStreamSystem implements System {
             text,
             x,
             y,
-            vx: this.randomRange(26, 52) * (0.78 + depth * 0.42),
+            vx: this.randomRange(22, 38) * (0.8 + depth * 0.4),
             vy: this.randomRange(-4, 4),
             age: scatterAcrossViewport ? this.randomRange(0, 18) : 0,
             fadeIn: 0.5,
@@ -586,15 +609,16 @@ export class ConsciousnessStreamSystem implements System {
             fontSize,
             width,
             height: fontSize * 1.08,
-            baseRotation: this.degToRad(this.randomRange(-6, 6)),
-            rotationWobbleAmp: this.degToRad(this.randomRange(0.7, 1.9)),
+            baseRotation: this.degToRad(this.randomRange(-24, 24)),
+            rotationWobbleAmp: this.degToRad(this.randomRange(2.2, 5.5)),
             rotationWobbleSpeed: this.randomRange(0.35, 0.92),
             rotationPhase: this.randomRange(0, Math.PI * 2),
             wormGlow: 0,
             words: wordLayout.words,
             isHovered: false,
             hoveredWordIndex: null,
-            state: 'flowing'
+            state: 'flowing',
+            maxWidth
         };
 
         this.fragments.push(fragment);
@@ -755,8 +779,8 @@ export class ConsciousnessStreamSystem implements System {
         const speed = speedBase + speedNoise + streamPulse;
 
         const crossNoise = this.valueNoise2D(x * 0.0022 + t * 0.14 + 17.3, y * 0.0031 - t * 0.1 + 5.2)
-            * this.lerp(0.8, 6.8, edgeFactor);
-        const centerPull = -signedDistance * 0.13;
+            * this.lerp(3.5, 14.0, edgeFactor);
+        const centerPull = -signedDistance * 0.035;
         const crossVelocity = crossNoise + centerPull;
 
         const vx = tx * speed - ty * crossVelocity;
@@ -806,6 +830,15 @@ export class ConsciousnessStreamSystem implements System {
             if (fragment.state === 'consumed') continue;
             const edgeFactor = this.getDistanceData(fragment.x, fragment.y, t, streamWidth).edgeFactor;
             if (edgeFactor <= 0.06) continue;
+
+            // OPTIMIZATION: AABB Check
+            // A simple bounding box check before rotation
+            const halfW = fragment.width * 0.55 + 20; // broad phase padding
+            const halfH = fragment.height * 0.55 + 20;
+            if (px < fragment.x - halfW || px > fragment.x + halfW ||
+                py < fragment.y - halfH || py > fragment.y + halfH) {
+                continue;
+            }
 
             const rotation = this.getFragmentRotation(fragment, t);
             const local = this.worldToFragmentLocal(px, py, fragment, rotation);
@@ -934,6 +967,12 @@ export class ConsciousnessStreamSystem implements System {
     private isCrowdedAt(x: number, y: number, minDistance: number) {
         for (const fragment of this.fragments) {
             if (fragment.state === 'consumed') continue;
+
+            // Check strictly for same "line" placement within crowded X-range
+            if (Math.abs(fragment.y - y) < 14 && Math.abs(fragment.x - x) < 220) {
+                return true;
+            }
+
             const dx = fragment.x - x;
             const dy = fragment.y - y;
             if (dx * dx + dy * dy < minDistance * minDistance) {
@@ -953,14 +992,14 @@ export class ConsciousnessStreamSystem implements System {
     }
 
     private getStreamWidth() {
-        const base = this.clamp(this.engine.height * 0.35, 300, 450);
+        const base = this.clamp(this.engine.height * 0.55, 450, 700);
         const t = performance.now() * 0.001;
         const animated = base + Math.sin(t * 0.12) * 14 + this.valueNoise1D(t * 0.18) * 11;
-        return this.clamp(animated, 300, 450);
+        return this.clamp(animated, 450, 700);
     }
 
     private getBaseFragmentCount() {
-        return Math.round(this.clamp(this.engine.width * 0.0074, 8, 16));
+        return Math.round(this.clamp(this.engine.width * 0.0045, 5, 8));
     }
 
     private getBaseParticleCount() {
@@ -986,6 +1025,8 @@ export class ConsciousnessStreamSystem implements System {
     private initializeThoughtStore() {
         this.seenThoughtTexts.clear();
         this.streamThoughts = [];
+        this.thoughtDeck = [];
+        // Re-enabled with newspaper/AI prompt seed data
         for (const thought of STREAM_SOURCE) {
             this.addThoughtIfNew({
                 id: String(thought.id),
@@ -999,8 +1040,18 @@ export class ConsciousnessStreamSystem implements System {
     private refreshThoughtsFromSource = async () => {
         if (this.isRefreshingThoughts) return;
         this.isRefreshingThoughts = true;
+
         try {
-            const response = await fetch(`/api/stream-thoughts?limit=${this.THOUGHT_FETCH_LIMIT}`);
+            // Rotate through sources
+            const source = this.sources[this.currentSourceIndex];
+            this.currentSourceIndex = (this.currentSourceIndex + 1) % this.sources.length;
+
+            let endpoint = '/api/stream-thoughts';
+            if (source === 'contemporary') {
+                endpoint = '/api/newspaper-thoughts';
+            }
+
+            const response = await fetch(`${endpoint}?limit=${this.THOUGHT_FETCH_LIMIT}`);
             if (!response.ok) return;
             const data = await response.json() as { thoughts?: StreamThought[] };
             const incoming = Array.isArray(data.thoughts) ? data.thoughts : [];
@@ -1008,7 +1059,7 @@ export class ConsciousnessStreamSystem implements System {
             incoming.forEach(thought => this.addThoughtIfNew(thought));
             const appended = this.streamThoughts.length - beforeCount;
             console.log(
-                `[STREAM] Thought refresh success: fetched=${incoming.length}, appended=${appended}, total=${this.streamThoughts.length}`
+                `[STREAM] Thought refresh success (source: ${source}): fetched=${incoming.length}, appended=${appended}, total=${this.streamThoughts.length}`
             );
         } catch (err) {
             console.warn('[STREAM] Thought refresh failed', err);
@@ -1026,9 +1077,9 @@ export class ConsciousnessStreamSystem implements System {
 
         this.seenThoughtTexts.add(dedupeKey);
         this.streamThoughts.push({
-            id: thought.id || `rss-${this.idCounter++}`,
+            id: thought.id || `np-${this.idCounter++}`,
             text,
-            source: thought.source || 'r/Showerthoughts',
+            source: thought.source || 'Archive',
             timestamp: Number.isFinite(thought.timestamp) ? thought.timestamp : Math.floor(Date.now() / 1000)
         });
     }
@@ -1037,46 +1088,92 @@ export class ConsciousnessStreamSystem implements System {
         return text.toLowerCase().replace(/\s+/g, ' ').trim();
     }
 
-    private pickStreamChunkText() {
+    private pickStreamChunk(): StreamThought {
         if (this.streamThoughts.length === 0) {
-            return 'ambient fragment';
+            return {
+                id: 'default',
+                text: 'ambient fragment',
+                source: 'Default',
+                timestamp: Date.now()
+            };
         }
 
-        const source = this.streamThoughts[this.randomInt(0, this.streamThoughts.length - 1)];
-        return source.text.trim().replace(/\s+/g, ' ');
+        // Refill deck if empty
+        if (this.thoughtDeck.length === 0) {
+            // Create indices for all thoughts
+            this.thoughtDeck = Array.from({ length: this.streamThoughts.length }, (_, i) => i);
+            // Shuffle
+            for (let i = this.thoughtDeck.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [this.thoughtDeck[i], this.thoughtDeck[j]] = [this.thoughtDeck[j], this.thoughtDeck[i]];
+            }
+        }
+
+        const index = this.thoughtDeck.pop();
+        // Fallback for safety, though theoretically impossible if logic is correct
+        if (index === undefined) {
+            return this.streamThoughts[this.randomInt(0, this.streamThoughts.length - 1)];
+        }
+
+        return this.streamThoughts[index];
     }
 
-    private layoutFragmentWords(text: string, fontSize: number) {
+    private layoutFragmentWords(text: string, fontSize: number, maxWidth: number) {
         const ctx = this.engine.ctx;
         ctx.save();
         ctx.font = `${fontSize.toFixed(1)}px monospace`;
-        const words = text.trim().split(/\s+/).filter(Boolean);
-        const wordMetrics = words.map(word => ({
-            text: word,
-            width: ctx.measureText(word).width
-        }));
-        const spaceWidth = ctx.measureText(' ').width;
-        const totalWidth = wordMetrics.reduce(
-            (acc, word, idx) => acc + word.width + (idx < wordMetrics.length - 1 ? spaceWidth : 0),
-            0
-        );
 
-        let cursor = -totalWidth / 2;
-        const layoutWords: StreamWord[] = wordMetrics.map((word, idx) => {
-            const xOffset = cursor + word.width / 2;
-            cursor += word.width + (idx < wordMetrics.length - 1 ? spaceWidth : 0);
-            return {
-                text: word.text,
-                width: word.width,
-                xOffset,
-                consumed: false
-            };
+        const words = text.trim().split(/\s+/).filter(Boolean);
+        const spaceWidth = ctx.measureText(' ').width;
+        const lineHeight = fontSize * 1.2;
+
+        const lines: { words: { text: string; width: number }[]; width: number }[] = [];
+        let currentLineWords: { text: string; width: number }[] = [];
+        let currentWidth = 0;
+
+        words.forEach(wordText => {
+            const wordWidth = ctx.measureText(wordText).width;
+            if (currentLineWords.length > 0 && currentWidth + spaceWidth + wordWidth > maxWidth) {
+                lines.push({ words: currentLineWords, width: currentWidth });
+                currentLineWords = [];
+                currentWidth = 0;
+            }
+            currentLineWords.push({ text: wordText, width: wordWidth });
+            currentWidth += wordWidth + (currentLineWords.length > 1 ? spaceWidth : 0);
+        });
+        if (currentLineWords.length > 0) {
+            lines.push({ words: currentLineWords, width: currentWidth });
+        }
+
+        const layoutWords: StreamWord[] = [];
+        const startY = -(lines.length - 1) * lineHeight / 2;
+
+        lines.forEach((line, lineIdx) => {
+            let cursor = -line.width / 2;
+            const yOffset = startY + lineIdx * lineHeight;
+
+            line.words.forEach((word, wordIdx) => {
+                layoutWords.push({
+                    text: word.text,
+                    width: word.width,
+                    xOffset: cursor + word.width / 2,
+                    yOffset,
+                    consumed: false
+                });
+                cursor += word.width + spaceWidth;
+            });
         });
 
         ctx.restore();
+
+        // Find max line width for internal bounding box
+        const totalWidth = lines.reduce((max, line) => Math.max(max, line.width), 0);
+        const totalHeight = lines.length * lineHeight;
+
         return {
             words: layoutWords,
-            totalWidth
+            totalWidth,
+            totalHeight
         };
     }
 

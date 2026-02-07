@@ -3,7 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from "@google/genai";
 import OpenAI from 'openai';
-import { saveWord, getStomachContent, deleteWord, clearStomach, saveWorm, getWorms, deleteWorm, deleteWormWords } from './db';
+import { saveWord, getStomachContent, deleteWord, clearStomach, saveWorm, getWorms, deleteWorm, deleteWormWords, saveGeneratedContent, getCachedContent, saveThoughtFragment, getThoughtFragments } from './db';
 import path from 'path';
 
 // Load env from project root
@@ -40,7 +40,7 @@ if (aiProvider === 'openai' && (!openaiKey || openaiKey === 'your_key_here')) {
     console.warn('[SERVER] ⚠️  AI features will not work. Get key from: https://platform.openai.com/');
 }
 
-const genAI = new GoogleGenAI({ apiKey: geminiKey || '' });
+const genAI = new GoogleGenAI({ apiKey: geminiKey || 'dummy_key_for_offline' });
 const openai = new OpenAI({
     apiKey: openaiKey || '',
     baseURL: openaiBaseUrl // Will use default if undefined
@@ -96,9 +96,27 @@ let newsCacheSource: 'gdelt' | 'fallback' = 'fallback';
 let newsCacheFetchedAt = 0;
 
 // Helper: Generate text with selected AI provider
-async function generateText(prompt: string): Promise<string> {
+async function generateText(prompt: string, context: string): Promise<string> {
+    // 1. Check for API key presence
+    const hasGemini = geminiKey && geminiKey !== 'your_key_here';
+    const hasOpenAI = openaiKey && openaiKey !== 'your_key_here';
+    const hasKey = aiProvider === 'openai' ? hasOpenAI : hasGemini;
+
+    // 2. If no key, try cache first
+    if (!hasKey) {
+        console.log(`[AI] No API key. Checking cache for context: ${context}`);
+        const cached = getCachedContent(context);
+        if (cached) {
+            console.log('[AI] Cache HIT!');
+            return cached;
+        }
+        console.log('[AI] Cache MISS. Returning empty string (will trigger fallback).');
+        return '';
+    }
+
+    // 3. Generate content
+    let text = '';
     if (aiProvider === 'openai') {
-        // Build request body - only include max_tokens if configured
         const requestBody: any = {
             model: openaiModel,
             messages: [{ role: 'user' as const, content: prompt }]
@@ -117,14 +135,20 @@ async function generateText(prompt: string): Promise<string> {
         }
 
         const response = await openai.chat.completions.create(requestBody);
-        return response.choices[0]?.message?.content || '';
+        text = response.choices[0]?.message?.content || '';
     } else {
         const response = await genAI.models.generateContent({
             model: 'gemini-2.5-flash',
             contents: prompt
         });
-        return response.text || '';
+        text = response.text || '';
     }
+
+    // 4. Cache the result if successful
+    if (text) {
+        saveGeneratedContent(context, text);
+    }
+    return text;
 }
 
 function normalizeHeadline(text: string) {
@@ -369,6 +393,117 @@ app.get('/api/stream-thoughts', async (req, res) => {
 });
 
 // 1. Eat Word
+app.get('/api/newspaper-thoughts', async (req, res) => {
+    const rawLimit = Number(req.query.limit);
+    const limit = Number.isFinite(rawLimit)
+        ? Math.max(1, Math.min(Math.floor(rawLimit), 50))
+        : 5;
+
+    try {
+        console.log(`[CONSCIOUSNESS] Request received (limit=${limit})`);
+
+        // Calculate split: 50% Pre-AI, 50% Post-AI
+        const preAICount = Math.ceil(limit * 0.5);
+        const postAICount = limit - preAICount;
+
+        const thoughts: any[] = [];
+
+        // --- Helper: Get Diverse Thoughts ---
+        const getDiverseThoughts = async (count: number, era: 'pre_ai' | 'post_ai') => {
+            // 1. Try to fetch from granular cache
+            let fragments = getThoughtFragments(era, count);
+
+            // 2. If we don't have enough, generate a fresh batch and save it
+            if (fragments.length < count) {
+                console.log(`[CONSCIOUSNESS] Not enough ${era} fragments (got ${fragments.length}, need ${count}). Generating fresh batch...`);
+
+                // Dynamic Themes for Diversity
+                const preAiThemes = [
+                    "Physicality (rust, paper, weight)", "Irreversibility (ink, carved stone)",
+                    "Local Community (gossip, handshake)", "Slow Information (waiting for letters)",
+                    "Analog Tech (radio static, film grain)", "Nature claiming ruins",
+                    "Silence and Boredom", "Manual Labor and Craft"
+                ];
+                const postAiThemes = [
+                    "Verification Paranoia (deepfakes)", "Infinite Reproducibility (copy-paste)",
+                    "Algorithmic Hallucinations", "Reality Breaking Down",
+                    "Digital Loneliness / Parasociality", "Surveillance Capitalism",
+                    "Glitch Aesthetics", "Memory vs Database"
+                ];
+
+                const theme = era === 'pre_ai'
+                    ? preAiThemes[Math.floor(Math.random() * preAiThemes.length)]
+                    : postAiThemes[Math.floor(Math.random() * postAiThemes.length)];
+
+                const missingCount = Math.max(20, count * 2); // Generate more than needed to stock up
+                const prompt = era === 'pre_ai'
+                    ? `Generate ${missingCount} unique text fragments from the PRE-AI ERA (1960s-1990s).
+                       Target Theme: "${theme}".
+                       Style: Earnest, descriptive, grounded. Focus on tangible objects.
+                       Keep each fragment between 20-50 words. Return JSON array of strings.`
+                    : `Generate ${missingCount} unique text fragments from the POST-AI ERA (2028-2040).
+                       Target Theme: "${theme}".
+                       Style: Clinical, skeptical, urgent.
+                       Keep each fragment between 20-50 words. Return JSON array of strings.`;
+
+                try {
+                    // Note: We bypass 'generateText' caching here to force new generation, 
+                    // or we could use it but with a unique context key if we wanted to cache the batch result too.
+                    // For now, let's use a unique key to allow caching but force variety via the random theme.
+                    const uniqueContext = `${era}_fragments_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+                    const text = await generateText(prompt, uniqueContext);
+
+                    const match = text.trim().match(/\[[\s\S]*\]/);
+                    if (match) {
+                        const newFragments = JSON.parse(match[0]);
+                        if (Array.isArray(newFragments)) {
+                            newFragments.forEach(t => saveThoughtFragment(String(t), era));
+                            // Refetch to mix with existing ones
+                            fragments = getThoughtFragments(era, count);
+                        }
+                    }
+                } catch (err) {
+                    console.error(`[CONSCIOUSNESS] Failed to generate ${era} thoughts:`, err);
+                }
+            }
+            return fragments;
+        };
+
+        // --- Execute fetching ---
+        const preAiFragments = await getDiverseThoughts(preAICount, 'pre_ai');
+        preAiFragments.forEach((text, i) => {
+            thoughts.push({
+                id: `pre-${Date.now()}-${i}-${Math.random().toString(36).substr(2, 5)}`,
+                text: text,
+                source: 'Archive',
+                timestamp: Math.floor(Date.now() / 1000)
+            });
+        });
+
+        const postAiFragments = await getDiverseThoughts(postAICount, 'post_ai');
+        postAiFragments.forEach((text, i) => {
+            thoughts.push({
+                id: `post-${Date.now()}-${i}-${Math.random().toString(36).substr(2, 5)}`,
+                text: text,
+                source: 'System',
+                timestamp: Math.floor(Date.now() / 1000)
+            });
+        });
+
+        // Shuffle
+        for (let i = thoughts.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [thoughts[i], thoughts[j]] = [thoughts[j], thoughts[i]];
+        }
+
+        console.log(`[CONSCIOUSNESS] ✅ Sent ${thoughts.length} thoughts to client`);
+        return res.json({ thoughts });
+    } catch (err: any) {
+        console.error("[CONSCIOUSNESS] ❌ Failed:", err.message);
+        res.status(500).json({ error: 'Failed to generate thoughts' });
+    }
+});
+
 app.post('/api/eat', (req, res) => {
     const { id, wormId, text } = req.body;
     console.log(`[SERVER] Eating word: ${text} (id: ${id}, wormId: ${wormId})`);
@@ -438,6 +573,7 @@ app.post('/api/worms', (req, res) => {
             parentId: worm.parentId,
             hue: worm.hue,
             sizeMultiplier: worm.sizeMultiplier,
+            thickness: worm.thickness ?? 0.25,
             speedMultiplier: worm.speedMultiplier,
             birthTime: worm.birthTime,
             satiation: worm.satiation,
@@ -477,11 +613,8 @@ app.delete('/api/worms/:id/words', (req, res) => {
 app.post('/api/thought', async (req, res) => {
     const { vocab } = req.body;
 
-    if ((aiProvider === 'gemini' && (!geminiKey || geminiKey === 'your_key_here')) ||
-        (aiProvider === 'openai' && (!openaiKey || openaiKey === 'your_key_here'))) {
-        console.log('[THOUGHT] API key not configured, returning fallback');
-        return res.status(503).json({ error: 'Brain missing (No API Key)' });
-    }
+
+
 
     if (!vocab || !Array.isArray(vocab)) {
         console.error('[THOUGHT] Invalid request: vocab must be an array, got:', typeof vocab);
@@ -491,7 +624,7 @@ app.post('/api/thought', async (req, res) => {
     try {
         console.log('[THOUGHT] Generating thought for vocab:', vocab.slice(0, 5));
         const prompt = `I have eaten these words: [${vocab.join(', ')}]. Respond as a lively blob. 1. ONLY use words from list or Japanese kaomoji (顏文字 like (o^^o), (´ω｀)). 2. NO standard emojis. 3. Be happy. 4. 1-4 words. 5. No explanation. 6. Use repeats.`;
-        const text = await generateText(prompt);
+        const text = await generateText(prompt, 'thought');
         console.log('[THOUGHT] Success:', text);
         res.json({ text: text || '...' });
     } catch (err: any) {
@@ -509,16 +642,8 @@ app.post('/api/thought', async (req, res) => {
 app.post('/api/split-words', async (req, res) => {
     const { words } = req.body;
 
-    if ((aiProvider === 'gemini' && (!geminiKey || geminiKey === 'your_key_here')) ||
-        (aiProvider === 'openai' && (!openaiKey || openaiKey === 'your_key_here'))) {
-        console.log('[SPLIT] API key not configured, using random split');
-        const shuffled = [...words].sort(() => Math.random() - 0.5);
-        const mid = Math.max(1, Math.floor(shuffled.length / 2));
-        return res.json({
-            bucket1: shuffled.slice(0, mid),
-            bucket2: shuffled.slice(mid)
-        });
-    }
+
+
     if (!words || words.length < 2) {
         return res.json({ bucket1: [words[0]], bucket2: [] });
     }
@@ -537,7 +662,7 @@ Rules:
 
 JSON:`;
 
-        const text = await generateText(prompt);
+        const text = await generateText(prompt, 'split');
         console.log('[SPLIT] AI response:', text);
         // Try to extract JSON
         const jsonMatch = text.trim().match(/\{[\s\S]*\}/);
@@ -587,25 +712,41 @@ JSON:`;
 
 // Name Worm
 app.post('/api/name-worm', async (req, res) => {
+
+
     const { words } = req.body;
 
-    if ((aiProvider === 'gemini' && (!geminiKey || geminiKey === 'your_key_here')) ||
-        (aiProvider === 'openai' && (!openaiKey || openaiKey === 'your_key_here'))) {
-        console.log('[NAMING] API key not configured, using fallback name');
-        return res.json({ name: 'blob' });
-    }
 
     try {
         console.log('[NAMING] Generating name for words:', words.slice(0, 5));
-        const prompt = `Words: ${words.join(', ')}. Generate ONE poetic word capturing their essence. Word only:`;
+        // New Prompt: Abstract, one-word, mystic titles
+        const prompt = `
+        Task: Create a single-word name for a digital entity based on these consumed words.
+        Words: ${words.join(', ')}
+        
+        Guidelines:
+        1. Name must be ONE word.
+        2. Abstract, mystical, or philosophical (e.g., "Flux", "Echo", "Drift", "Cipher", "Omen").
+        3. NO "Blob", "Worm", "Glutton".
+        4. Lowercase only.
+        5. If words are random, invent a cool sounding nonsense name (e.g. "Xylos", "Vex").
+        
+        Name:`;
 
-        const text = await generateText(prompt);
-        const name = text.trim().toLowerCase().replace(/[^a-z]/g, '') || 'blob';
+        const text = await generateText(prompt, 'name');
+        let name = text.trim().toLowerCase().replace(/[^a-z]/g, '');
+
+        // Fallback filter
+        if (!name || name.includes('blob') || name.includes('worm')) {
+            const fallbacks = ['cipher', 'flux', 'echo', 'null', 'void', 'spark', 'drift'];
+            name = fallbacks[Math.floor(Math.random() * fallbacks.length)];
+        }
+
         console.log('[NAMING] ✅ Generated name:', name);
-        res.json({ name: name || 'blob' });
+        res.json({ name });
     } catch (err: any) {
         console.error("[NAMING] ❌ Failed:", err.message || err);
-        res.json({ name: 'blob' });
+        res.json({ name: 'void' });
     }
 });
 
@@ -627,24 +768,16 @@ app.get('/api/world-text', (req, res) => {
 
 // 5. Generate New Paragraphs (AI)
 app.post('/api/generate-paragraphs', async (req, res) => {
+
+
     const { count = 3 } = req.body;
 
-    if ((aiProvider === 'gemini' && (!geminiKey || geminiKey === 'your_key_here')) ||
-        (aiProvider === 'openai' && (!openaiKey || openaiKey === 'your_key_here'))) {
-        console.log('[GENERATE] API key not configured, returning fallback paragraphs');
-        const fallbackParagraphs = [
-            "Words drift through the void seeking meaning.",
-            "The worm knows hunger and the taste of language.",
-            "Between letters lies the unspoken truth."
-        ];
-        return res.json({ paragraphs: fallbackParagraphs.slice(0, count) });
-    }
 
     try {
         console.log(`[GENERATE] Generating ${count} new paragraphs...`);
         const prompt = `Generate ${count} philosophical single-sentence paragraphs about language, words, meaning, and digital consciousness. Each should be poetic and thought-provoking. Format as JSON array: ["sentence1", "sentence2", "sentence3"]`;
 
-        const text = await generateText(prompt);
+        const text = await generateText(prompt, 'paragraphs');
         console.log('[GENERATE] AI response:', text);
 
         // Try to extract JSON array
