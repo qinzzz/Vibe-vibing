@@ -92,6 +92,10 @@ interface QueuedStorm {
     placement: StormPlacement;
 }
 
+interface NewsHeadlineFeedItem {
+    title?: string;
+}
+
 export class BackgroundSystem implements System {
     private engine!: Engine;
     private blocks: TextBlock[] = [];
@@ -139,9 +143,23 @@ export class BackgroundSystem implements System {
         landingRadius: 1.0,
         landingSpeed: 1.0
     };
+    private streamAvoidBaseY = 0;
+    private streamAvoidHalfHeight = 0;
+    private newsHeadlinePool: string[] = [];
+    private newsHeadlineSeen: Set<string> = new Set();
+    private newsHeadlineCursor = 0;
+    private newsRefreshTimer: number | null = null;
+    private isRefreshingNewsPool = false;
+    private readonly NEWS_REFRESH_MS = 2 * 60 * 60 * 1000;
+    private readonly NEWS_FETCH_LIMIT = 60;
 
     init(engine: Engine) {
         this.engine = engine;
+        const activeWorm = engine.activeWorm;
+        const wormHeight = engine.config.coreRadius * (activeWorm?.sizeMultiplier ?? 1);
+        this.streamAvoidBaseY = (activeWorm?.corePos.y ?? engine.cameraPos.y) + wormHeight * 1.34;
+        const streamWidth = this.clamp(engine.height * 0.35, 300, 450);
+        this.streamAvoidHalfHeight = streamWidth * 0.5 + 92;
         this.lastCameraPos = { x: engine.cameraPos.x, y: engine.cameraPos.y };
         this.nearbyWordCheckTimer = this.NEARBY_WORD_CHECK_INTERVAL;
         this.regenerationCooldownTimer = 0;
@@ -152,6 +170,8 @@ export class BackgroundSystem implements System {
         this.prevailingSpin = Math.random() > 0.5 ? 1 : -1;
         this.prevailingSpinTarget = this.prevailingSpin;
         this.initBackgroundText();
+        this.refreshNewsHeadlinePool();
+        this.newsRefreshTimer = window.setInterval(this.refreshNewsHeadlinePool, this.NEWS_REFRESH_MS);
 
         this.engine.events.on('INPUT_START', this.handleInput);
         this.engine.events.on(EVENTS.WORD_RELEASED, this.handleWordReleased);
@@ -172,7 +192,9 @@ export class BackgroundSystem implements System {
         placement?: StormPlacement;
         immediate?: boolean;
     }) => {
-        const headline = payload?.headline?.trim() || this.generateSimulatedHeadline();
+        const headline = payload?.headline?.trim()
+            || this.pickStormHeadline()
+            || this.generateSimulatedHeadline();
         this.enqueueStorm({
             headline,
             placement: payload?.placement ?? 'anchor',
@@ -202,6 +224,7 @@ export class BackgroundSystem implements System {
         if (enabled) {
             this.reseedWeatherPhase();
             this.reseedPrevailingDirection(false);
+            this.refreshNewsHeadlinePool();
         } else {
             this.weatherPhase = { speed: 1, wind: 1, swirl: 1, drag: 1 };
             this.prevailingTargetWind = { ...this.prevailingWind };
@@ -420,8 +443,15 @@ export class BackgroundSystem implements System {
         );
     }
 
-    private canPlaceBlock(testBlock: TextBlock, padding = 50) {
+    private canPlaceBlock(testBlock: TextBlock, padding = 50, avoidStream = false) {
+        if (avoidStream && this.overlapsStreamLane(testBlock, padding)) return false;
         return !this.blocks.some(block => this.hasPresentTokens(block) && this.blocksOverlap(testBlock, block, padding));
+    }
+
+    private overlapsStreamLane(block: TextBlock, padding = 0) {
+        const minY = this.streamAvoidBaseY - this.streamAvoidHalfHeight - padding;
+        const maxY = this.streamAvoidBaseY + this.streamAvoidHalfHeight + padding;
+        return block.y < maxY && (block.y + block.height) > minY;
     }
 
     private generateBlocks(paragraphs: string[], attempts: number, ctx: CanvasRenderingContext2D) {
@@ -433,7 +463,7 @@ export class BackgroundSystem implements System {
                 const spawn = this.getSpawnPosition();
                 const testBlock = tokenizeAndLayout(text, spawn.x, spawn.y, ctx);
 
-                if (this.canPlaceBlock(testBlock)) {
+                if (this.canPlaceBlock(testBlock, 50, true)) {
                     this.blocks.push(testBlock);
                     placed = true;
                     break;
@@ -1015,6 +1045,51 @@ export class BackgroundSystem implements System {
         return `${subject} ${verb} ${object} ${tail}`;
     }
 
+    private refreshNewsHeadlinePool = async () => {
+        if (this.isRefreshingNewsPool) return;
+        this.isRefreshingNewsPool = true;
+
+        try {
+            const response = await fetch(`/api/news/headlines?limit=${this.NEWS_FETCH_LIMIT}`);
+            if (!response.ok) {
+                throw new Error(`headline pool request failed: ${response.status}`);
+            }
+
+            const payload = await response.json();
+            const rawItems: NewsHeadlineFeedItem[] = Array.isArray(payload?.headlines) ? payload.headlines : [];
+            let added = 0;
+
+            for (const item of rawItems) {
+                const title = typeof item?.title === 'string' ? item.title.trim().replace(/\s+/g, ' ') : '';
+                if (!title) continue;
+                const key = title.toLowerCase();
+                if (this.newsHeadlineSeen.has(key)) continue;
+                this.newsHeadlineSeen.add(key);
+                this.newsHeadlinePool.push(title);
+                added++;
+            }
+
+            if (added > 0 && this.newsHeadlinePool.length === added) {
+                this.newsHeadlineCursor = Math.floor(Math.random() * this.newsHeadlinePool.length);
+            }
+
+            console.log(
+                `[NEWS] Storm pool refresh: added=${added}, total=${this.newsHeadlinePool.length}, source=${payload?.source || 'unknown'}`
+            );
+        } catch (err) {
+            console.error('[NEWS] Storm pool refresh failed:', err);
+        } finally {
+            this.isRefreshingNewsPool = false;
+        }
+    };
+
+    private pickStormHeadline() {
+        if (this.newsHeadlinePool.length === 0) return null;
+        const index = this.newsHeadlineCursor % this.newsHeadlinePool.length;
+        this.newsHeadlineCursor = (this.newsHeadlineCursor + 1) % this.newsHeadlinePool.length;
+        return this.newsHeadlinePool[index];
+    }
+
     private applyAirflowDisplacement(storm: NewsStorm) {
         const flowRadius = 210;
 
@@ -1211,7 +1286,7 @@ export class BackgroundSystem implements System {
 
         if (this.queuedStorms.length < this.STORM_MODE_MAX_QUEUE) {
             this.enqueueStorm({
-                headline: this.generateSimulatedHeadline(),
+                headline: this.pickStormHeadline() || this.generateSimulatedHeadline(),
                 placement: 'viewport',
                 immediate: false
             });
@@ -1464,7 +1539,7 @@ export class BackgroundSystem implements System {
                     const spawn = this.getSpawnPosition();
                     const testBlock = tokenizeAndLayout(text, spawn.x, spawn.y, ctx);
 
-                    if (this.canPlaceBlock(testBlock)) {
+                    if (this.canPlaceBlock(testBlock, 50, true)) {
                         this.blocks.push(testBlock);
                         placed = true;
                         break;
@@ -1729,6 +1804,10 @@ export class BackgroundSystem implements System {
     }
 
     cleanup() {
+        if (this.newsRefreshTimer !== null) {
+            window.clearInterval(this.newsRefreshTimer);
+            this.newsRefreshTimer = null;
+        }
         this.engine.events.off('INPUT_START', this.handleInput);
         this.engine.events.off(EVENTS.WORD_RELEASED, this.handleWordReleased);
         this.engine.events.off(EVENTS.NEWS_STORM_TRIGGERED, this.handleNewsStormTriggered);

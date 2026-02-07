@@ -8,6 +8,9 @@ import { Engine } from './core/Engine';
 import { EVENTS } from './core/events';
 import type { Worm } from './types';
 
+const NEWS_PREFETCH_LIMIT = 25;
+const NEWS_PREFETCH_MS = 2 * 60 * 60 * 1000;
+
 const App: React.FC = () => {
   const [params, setParams] = useState({
     l1: 58.00,
@@ -49,9 +52,30 @@ const App: React.FC = () => {
   const [activeWormId, setActiveWormId] = useState<string>('worm-0');
   const [isReproducing, setIsReproducing] = useState(false);
   const engineRef = useRef<Engine | null>(null);
+  const newsHeadlinePoolRef = useRef<string[]>([]);
 
   const handleWordSwallowed = useCallback((data: { id: string, text: string }) => {
     setSwallowedWords(prev => [data, ...prev]);
+  }, []);
+
+  const prefetchNewsHeadlines = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/news/headlines?limit=${NEWS_PREFETCH_LIMIT}`);
+      if (!res.ok) return;
+      const payload = await res.json();
+      const count = Array.isArray(payload?.headlines) ? payload.headlines.length : 0;
+      const titles = Array.isArray(payload?.headlines)
+        ? payload.headlines
+            .map((item: any) => (typeof item?.title === 'string' ? item.title.trim() : ''))
+            .filter((title: string) => title.length > 0)
+        : [];
+      if (titles.length > 0) {
+        newsHeadlinePoolRef.current = titles;
+      }
+      console.log(`[NEWS] Prefetch ready: source=${payload?.source || 'unknown'}, count=${count}`);
+    } catch (err) {
+      console.error('[NEWS] Prefetch failed:', err);
+    }
   }, []);
 
   const handleEngineInit = useCallback((engine: Engine) => {
@@ -103,6 +127,17 @@ const App: React.FC = () => {
     engineRef.current.events.emit(EVENTS.NEWS_STORM_WEATHER_UPDATED, stormWeather);
   }, [stormWeather]);
 
+  useEffect(() => {
+    prefetchNewsHeadlines();
+    const timer = window.setInterval(prefetchNewsHeadlines, NEWS_PREFETCH_MS);
+    return () => window.clearInterval(timer);
+  }, [prefetchNewsHeadlines]);
+
+  useEffect(() => {
+    if (!isStormMode) return;
+    prefetchNewsHeadlines();
+  }, [isStormMode, prefetchNewsHeadlines]);
+
   const updateWormList = () => {
     if (!engineRef.current) return;
     const wormArray = Array.from(engineRef.current.wormState.worms.values());
@@ -152,8 +187,15 @@ const App: React.FC = () => {
 
   const handleSendNewsWind = () => {
     if (!engineRef.current) return;
+
+    const pool = newsHeadlinePoolRef.current;
+    const headline = pool.length > 0
+      ? pool[Math.floor(Math.random() * pool.length)]
+      : undefined;
+
     engineRef.current.events.emit(EVENTS.NEWS_STORM_TRIGGERED, {
-      placement: isStormMode ? 'viewport' : 'anchor'
+      placement: isStormMode ? 'viewport' : 'anchor',
+      headline
     });
   };
 

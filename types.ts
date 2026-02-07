@@ -64,6 +64,48 @@ export interface SpeechBubble {
   timer: number;
 }
 
+export type DigestionStage = 'fresh' | 'digesting' | 'absorbed';
+
+export interface DigestionRecord {
+  id: string;
+  text: string;
+  stage: DigestionStage;
+  timer: number;
+  digestDuration: number;
+  applied: boolean;
+  absorbedAge: number;
+}
+
+export interface SoulAxes {
+  calm: number;
+  tender: number;
+  poetic: number;
+  curious: number;
+  bold: number;
+  orderly: number;
+  hopeful: number;
+  social: number;
+  focused: number;
+  stubborn: number;
+}
+
+export interface SoulIdentity {
+  mood: string;
+  temperament: string;
+  preferences: string[];
+  aversions: string[];
+  fears: string[];
+  values: string[];
+  cravings: string[];
+}
+
+export interface WormSoul {
+  axes: SoulAxes;
+  identity: SoulIdentity;
+  motto: string;
+  absorbedCount: number;
+}
+
 // Background Text Types
 export interface Letter {
   char: string;
@@ -121,6 +163,8 @@ export interface Worm {
   // Vocabulary (from DigestionSystem)
   vocabulary: Set<string>;
   swallowedWords: SwallowedWord[];
+  digestionQueue: DigestionRecord[];
+  soul: WormSoul;
 }
 
 export interface WormState {

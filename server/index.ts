@@ -46,6 +46,55 @@ const openai = new OpenAI({
     baseURL: openaiBaseUrl // Will use default if undefined
 });
 
+type NewsHeadline = {
+    id: string;
+    title: string;
+    url: string;
+    source: string;
+    publishedAt: number;
+};
+
+type StreamThought = {
+    id: string;
+    text: string;
+    source: string;
+    timestamp: number;
+};
+
+const GDELT_DOC_API_URL = 'https://api.gdeltproject.org/api/v2/doc/doc';
+const DEFAULT_GDELT_QUERY = process.env.GDELT_QUERY || '(technology OR climate OR economy OR election OR conflict)';
+const REDDIT_STREAM_RSS_URL = 'https://www.reddit.com/r/Showerthoughts/.rss';
+const NEWS_REFRESH_MS = 2 * 60 * 60 * 1000;
+const NEWS_CACHE_MAX = 60;
+
+const FALLBACK_HEADLINES: NewsHeadline[] = [
+    {
+        id: 'fallback-1',
+        title: 'Markets absorb another wave of policy uncertainty across major economies.',
+        url: '',
+        source: 'fallback',
+        publishedAt: Math.floor(Date.now() / 1000)
+    },
+    {
+        id: 'fallback-2',
+        title: 'Regional weather disruptions continue to pressure logistics and food supply chains.',
+        url: '',
+        source: 'fallback',
+        publishedAt: Math.floor(Date.now() / 1000)
+    },
+    {
+        id: 'fallback-3',
+        title: 'New AI governance frameworks spark debate over safety, speed, and transparency.',
+        url: '',
+        source: 'fallback',
+        publishedAt: Math.floor(Date.now() / 1000)
+    }
+];
+
+let newsHeadlinesCache: NewsHeadline[] = [...FALLBACK_HEADLINES];
+let newsCacheSource: 'gdelt' | 'fallback' = 'fallback';
+let newsCacheFetchedAt = 0;
+
 // Helper: Generate text with selected AI provider
 async function generateText(prompt: string): Promise<string> {
     if (aiProvider === 'openai') {
@@ -77,6 +126,247 @@ async function generateText(prompt: string): Promise<string> {
         return response.text || '';
     }
 }
+
+function normalizeHeadline(text: string) {
+    return text.toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function sanitizeHeadline(text: string) {
+    return text
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function parseHeadlineTime(raw: any) {
+    if (typeof raw === 'number' && Number.isFinite(raw)) {
+        return Math.floor(raw > 1e12 ? raw / 1000 : raw);
+    }
+    if (typeof raw === 'string') {
+        const fromDate = Date.parse(raw);
+        if (Number.isFinite(fromDate)) return Math.floor(fromDate / 1000);
+        const digits = raw.replace(/\D/g, '');
+        if (digits.length >= 14) {
+            const iso = `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6, 8)}T${digits.slice(8, 10)}:${digits.slice(10, 12)}:${digits.slice(12, 14)}Z`;
+            const parsed = Date.parse(iso);
+            if (Number.isFinite(parsed)) return Math.floor(parsed / 1000);
+        }
+    }
+    return Math.floor(Date.now() / 1000);
+}
+
+function parseGdeltHeadlines(payload: any): NewsHeadline[] {
+    const rawArticles: any[] = Array.isArray(payload?.articles) ? payload.articles : [];
+    const seen = new Set<string>();
+    const headlines: NewsHeadline[] = [];
+
+    for (const article of rawArticles) {
+        const title = sanitizeHeadline(String(article?.title || ''));
+        if (!title || title.length < 18) continue;
+        const dedupeKey = normalizeHeadline(title);
+        if (seen.has(dedupeKey)) continue;
+        seen.add(dedupeKey);
+
+        const url = typeof article?.url === 'string' ? article.url : '';
+        const source = typeof article?.domain === 'string' && article.domain
+            ? article.domain
+            : (typeof article?.sourcecountry === 'string' && article.sourcecountry ? article.sourcecountry : 'GDELT');
+        const publishedAt = parseHeadlineTime(article?.seendate || article?.date || article?.datetime || article?.published);
+
+        headlines.push({
+            id: String(article?.url || article?.title || `gdelt-${headlines.length}`),
+            title,
+            url,
+            source,
+            publishedAt
+        });
+    }
+
+    return headlines.sort((a, b) => b.publishedAt - a.publishedAt);
+}
+
+async function fetchGdeltHeadlines(query: string, maxRecords: number): Promise<NewsHeadline[]> {
+    const url = new URL(GDELT_DOC_API_URL);
+    url.searchParams.set('query', query);
+    url.searchParams.set('mode', 'ArtList');
+    url.searchParams.set('format', 'json');
+    url.searchParams.set('maxrecords', String(Math.max(1, Math.min(Math.floor(maxRecords), 250))));
+    url.searchParams.set('sort', 'DateDesc');
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 7000);
+    try {
+        const response = await fetch(url.toString(), {
+            headers: {
+                'Accept': 'application/json',
+                'User-Agent': 'the-word-worm/1.0 (+http://localhost:3001)'
+            },
+            signal: controller.signal
+        });
+        if (!response.ok) {
+            throw new Error(`GDELT request failed: ${response.status}`);
+        }
+        const payload = await response.json();
+        return parseGdeltHeadlines(payload);
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+async function refreshNewsHeadlinesCache(reason: 'startup' | 'timer' | 'stale' | 'empty') {
+    try {
+        const parsed = await fetchGdeltHeadlines(DEFAULT_GDELT_QUERY, NEWS_CACHE_MAX * 3);
+        if (parsed.length > 0) {
+            newsHeadlinesCache = parsed.slice(0, NEWS_CACHE_MAX);
+            newsCacheSource = 'gdelt';
+            newsCacheFetchedAt = Date.now();
+            console.log(`[NEWS] GDELT cache refresh success: reason=${reason}, parsed=${parsed.length}, cached=${newsHeadlinesCache.length}`);
+            return;
+        }
+        if (newsHeadlinesCache.length === 0) {
+            newsHeadlinesCache = [...FALLBACK_HEADLINES];
+            newsCacheSource = 'fallback';
+            newsCacheFetchedAt = Date.now();
+        }
+        console.warn(`[NEWS] GDELT cache refresh returned no headlines: reason=${reason}`);
+    } catch (err: any) {
+        if (newsHeadlinesCache.length === 0) {
+            newsHeadlinesCache = [...FALLBACK_HEADLINES];
+            newsCacheSource = 'fallback';
+            newsCacheFetchedAt = Date.now();
+        }
+        console.error(`[NEWS] GDELT cache refresh failed: reason=${reason}`, err?.message || err);
+    }
+}
+
+function decodeXmlEntities(text: string) {
+    return text
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&#x27;/gi, "'")
+        .replace(/&#x2F;/gi, '/')
+        .replace(/&#(\d+);/g, (_, code: string) => String.fromCharCode(Number(code)))
+        .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)));
+}
+
+function stripCdata(text: string) {
+    return text.replace(/^<!\[CDATA\[/, '').replace(/\]\]>$/, '').trim();
+}
+
+function parseRedditRssThoughts(xml: string, maxItems: number): StreamThought[] {
+    const thoughts: StreamThought[] = [];
+    const entryBlocks = [...xml.matchAll(/<entry\b[\s\S]*?<\/entry>/gi)];
+
+    for (const entryMatch of entryBlocks) {
+        if (thoughts.length >= maxItems) break;
+        const entry = entryMatch[0];
+        const titleMatch = entry.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+        if (!titleMatch) continue;
+
+        // Keep the full title line as-is (normalized spacing only).
+        const rawTitle = stripCdata(titleMatch[1]);
+        const title = decodeXmlEntities(rawTitle).replace(/\s+/g, ' ').trim();
+        if (!title) continue;
+
+        const idMatch = entry.match(/<id[^>]*>([\s\S]*?)<\/id>/i);
+        const updatedMatch = entry.match(/<updated[^>]*>([\s\S]*?)<\/updated>/i);
+        const id = decodeXmlEntities(stripCdata(idMatch?.[1] || title));
+        const updatedText = decodeXmlEntities(stripCdata(updatedMatch?.[1] || ''));
+        const updatedTime = updatedText ? Date.parse(updatedText) : Date.now();
+
+        thoughts.push({
+            id,
+            text: title,
+            source: 'r/Showerthoughts',
+            timestamp: Math.floor((Number.isFinite(updatedTime) ? updatedTime : Date.now()) / 1000)
+        });
+    }
+
+    return thoughts;
+}
+
+// News headlines source (GDELT Doc API).
+app.get('/api/news/headlines', async (req, res) => {
+    const requestedLimit = Number(req.query.limit);
+    const limit = Number.isFinite(requestedLimit)
+        ? Math.max(1, Math.min(Math.floor(requestedLimit), 60))
+        : 25;
+    const query = typeof req.query.q === 'string' && req.query.q.trim()
+        ? req.query.q.trim()
+        : DEFAULT_GDELT_QUERY;
+
+    try {
+        if (query === DEFAULT_GDELT_QUERY) {
+            const isEmpty = newsHeadlinesCache.length === 0;
+            const isStale = !newsCacheFetchedAt || (Date.now() - newsCacheFetchedAt) > NEWS_REFRESH_MS;
+            if (isEmpty || isStale) {
+                await refreshNewsHeadlinesCache(isEmpty ? 'empty' : 'stale');
+            }
+
+            const headlines = newsHeadlinesCache.slice(0, limit);
+            console.log(
+                `[NEWS] headline cache serve: source=${newsCacheSource}, cached=${newsHeadlinesCache.length}, returned=${headlines.length}, limit=${limit}`
+            );
+            return res.json({
+                source: newsCacheSource,
+                query,
+                fetchedAt: Math.floor(newsCacheFetchedAt > 0 ? newsCacheFetchedAt / 1000 : Date.now() / 1000),
+                headlines
+            });
+        }
+
+        // Custom query path: fetch live, do not replace default cache.
+        const parsed = await fetchGdeltHeadlines(query, Math.max(limit * 3, 25));
+        const headlines = parsed.slice(0, limit);
+        console.log(`[NEWS] GDELT custom fetch success: parsed=${parsed.length}, returned=${headlines.length}, limit=${limit}`);
+        res.json({
+            source: 'gdelt',
+            query,
+            fetchedAt: Math.floor(Date.now() / 1000),
+            headlines: headlines.length > 0 ? headlines : FALLBACK_HEADLINES.slice(0, limit)
+        });
+    } catch (err: any) {
+        console.error('[NEWS] GDELT fetch failed, using fallback:', err?.message || err);
+        res.json({
+            source: 'fallback',
+            query,
+            fetchedAt: Math.floor(Date.now() / 1000),
+            headlines: FALLBACK_HEADLINES.slice(0, limit)
+        });
+    }
+});
+
+// Stream thought feed source (Reddit RSS title lines).
+app.get('/api/stream-thoughts', async (req, res) => {
+    const rawLimit = Number(req.query.limit);
+    const limit = Number.isFinite(rawLimit)
+        ? Math.max(1, Math.min(Math.floor(rawLimit), 100))
+        : 60;
+
+    try {
+        const response = await fetch(REDDIT_STREAM_RSS_URL, {
+            headers: {
+                'User-Agent': 'the-word-worm/1.0 (+http://localhost:3001)',
+                'Accept': 'application/atom+xml, application/xml;q=0.9, */*;q=0.8'
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error(`RSS request failed: ${response.status}`);
+        }
+
+        const xml = await response.text();
+        const thoughts = parseRedditRssThoughts(xml, limit);
+        console.log(`[STREAM] RSS fetch success: parsed=${thoughts.length}, limit=${limit}`);
+        res.json({ thoughts });
+    } catch (err) {
+        console.error('[STREAM] Failed to fetch Showerthoughts RSS:', err);
+        res.json({ thoughts: [] });
+    }
+});
 
 // 1. Eat Word
 app.post('/api/eat', (req, res) => {
@@ -385,6 +675,12 @@ app.post('/api/generate-paragraphs', async (req, res) => {
         res.json({ paragraphs: fallbackParagraphs.slice(0, count) });
     }
 });
+
+// Warm and refresh news cache in background (startup + every 2h).
+void refreshNewsHeadlinesCache('startup');
+setInterval(() => {
+    void refreshNewsHeadlinesCache('timer');
+}, NEWS_REFRESH_MS);
 
 app.listen(PORT, () => {
     console.log(`Worm Server running at http://localhost:${PORT}`);

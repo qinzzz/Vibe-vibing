@@ -3,6 +3,13 @@ import { Engine } from '../core/Engine';
 import { EVENTS } from '../core/events';
 import { System } from '../core/types';
 
+type StreamThought = {
+    id: string;
+    text: string;
+    source: string;
+    timestamp: number;
+};
+
 type StreamFragmentState = 'flowing' | 'selected' | 'consumed';
 type ParticleLayer = 'far' | 'mid' | 'near';
 
@@ -80,8 +87,13 @@ export class ConsciousnessStreamSystem implements System {
     private fragments: StreamFragment[] = [];
     private particles: StreamParticle[] = [];
     private eddies: StreamEddy[] = [];
+    private streamThoughts: StreamThought[] = [];
+    private seenThoughtTexts: Set<string> = new Set();
+    private thoughtRefreshTimer: number | null = null;
+    private isRefreshingThoughts = false;
 
     private streamBaseY = 0;
+    private streamLabelX = 0;
     private fragmentSpawnTimer = 0;
     private particleSpawnTimer = 0;
     private eddyTimer = 0;
@@ -97,14 +109,26 @@ export class ConsciousnessStreamSystem implements System {
     private readonly EAT_DISTANCE = 70;
     private readonly WORM_INFLUENCE_RADIUS = 180;
     private readonly WARMUP_DURATION = 14; // seconds
+    private readonly THOUGHT_REFRESH_MS = 2 * 60 * 60 * 1000;
+    private readonly THOUGHT_FETCH_LIMIT = 60;
 
     init(engine: Engine) {
         this.engine = engine;
-        this.streamBaseY = engine.activeWorm?.corePos.y ?? engine.cameraPos.y;
+        this.initializeThoughtStore();
+        const activeWorm = engine.activeWorm;
+        const wormBaseY = activeWorm?.corePos.y ?? engine.cameraPos.y;
+        const wormHeight = engine.config.coreRadius * (activeWorm?.sizeMultiplier ?? 1);
+        this.streamBaseY = wormBaseY + wormHeight * 1.34;
+        this.streamLabelX = activeWorm?.corePos.x ?? engine.cameraPos.x;
         this.fragmentSpawnTimer = this.randomRange(this.FRAGMENT_SPAWN_MIN, this.FRAGMENT_SPAWN_MAX);
         this.particleSpawnTimer = 0;
         this.eddyTimer = this.randomRange(10, 20);
         this.seedInitialPopulation();
+        this.refreshThoughtsFromSource();
+        this.thoughtRefreshTimer = window.setInterval(
+            this.refreshThoughtsFromSource,
+            this.THOUGHT_REFRESH_MS
+        );
 
         this.engine.events.on('INPUT_START', this.handleInput);
     }
@@ -161,14 +185,20 @@ export class ConsciousnessStreamSystem implements System {
         this.drawStreamBody(ctx, t, streamWidth);
         this.drawParticles(ctx, t, streamWidth);
         this.drawFragments(ctx, t, streamWidth);
+        this.drawStreamLabel(ctx, t, streamWidth);
     }
 
     cleanup() {
         this.engine.events.off('INPUT_START', this.handleInput);
+        if (this.thoughtRefreshTimer !== null) {
+            window.clearInterval(this.thoughtRefreshTimer);
+            this.thoughtRefreshTimer = null;
+        }
         this.fragments = [];
         this.particles = [];
         this.eddies = [];
         this.activeEatTarget = null;
+        this.seenThoughtTexts.clear();
     }
 
     private handleInput = (pos: { x: number; y: number }) => {
@@ -420,7 +450,7 @@ export class ConsciousnessStreamSystem implements System {
             ctx.save();
             ctx.translate(fragment.x, fragment.y);
             ctx.rotate(rotation);
-            ctx.font = `${fragment.fontSize.toFixed(1)}px monospace`;
+            ctx.font = `italic ${fragment.fontSize.toFixed(1)}px monospace`;
             ctx.shadowColor = isSelected
                 ? `rgba(96, 165, 250, ${this.clamp(finalAlpha * 0.8, 0, 0.65)})`
                 : `rgba(186, 205, 224, ${this.clamp(finalAlpha * 0.45, 0, 0.4)})`;
@@ -462,6 +492,47 @@ export class ConsciousnessStreamSystem implements System {
                 }
             }
             ctx.restore();
+        }
+
+        ctx.restore();
+    }
+
+    private drawStreamLabel(ctx: CanvasRenderingContext2D, t: number, streamWidth: number) {
+        const text = 'STREAM OF CONCIOUSNESS';
+        const labelY = this.centerlineY(this.streamLabelX, t) + streamWidth * 0.24 - 4;
+        ctx.save();
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.font = "italic 16px 'Space Mono'";
+
+        const glyphs = text.split('');
+        const tracking = 3.8;
+        const widths = glyphs.map(glyph => ctx.measureText(glyph).width);
+        const totalWidth = widths.reduce((sum, width) => sum + width, 0) + tracking * Math.max(0, glyphs.length - 1);
+        let cursor = -totalWidth / 2;
+
+        for (let i = 0; i < glyphs.length; i++) {
+            const glyph = glyphs[i];
+            const glyphWidth = widths[i];
+            const x = this.streamLabelX + cursor;
+            const y = labelY + Math.sin(t * 0.9 + i * 0.44) * 2.1;
+            const rotation = this.degToRad(
+                Math.sin(t * 0.7 + i * 0.6) * 4 + this.valueNoise1D(i * 0.37 + t * 0.2) * 1.8
+            );
+            const hue = 198 + Math.sin(i * 0.26 + t * 0.2) * 10;
+            const lightness = 68 + Math.sin(t * 1.1 + i * 0.48) * 8;
+            const alpha = 0.58 + Math.sin(t * 0.8 + i * 0.31) * 0.09;
+
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.rotate(rotation);
+            ctx.shadowColor = `hsla(${hue}, 80%, 70%, ${this.clamp(alpha * 0.55, 0, 0.42)})`;
+            ctx.shadowBlur = 4;
+            ctx.fillStyle = `hsla(${hue}, 78%, ${lightness}%, ${this.clamp(alpha, 0.44, 0.72)})`;
+            ctx.fillText(glyph, 0, 0);
+            ctx.restore();
+
+            cursor += glyphWidth + tracking;
         }
 
         ctx.restore();
@@ -912,35 +983,67 @@ export class ConsciousnessStreamSystem implements System {
         return this.fragments.reduce((acc, fragment) => acc + (fragment.state === 'consumed' ? 0 : 1), 0);
     }
 
+    private initializeThoughtStore() {
+        this.seenThoughtTexts.clear();
+        this.streamThoughts = [];
+        for (const thought of STREAM_SOURCE) {
+            this.addThoughtIfNew({
+                id: String(thought.id),
+                text: String(thought.text),
+                source: String(thought.source),
+                timestamp: Number(thought.timestamp)
+            });
+        }
+    }
+
+    private refreshThoughtsFromSource = async () => {
+        if (this.isRefreshingThoughts) return;
+        this.isRefreshingThoughts = true;
+        try {
+            const response = await fetch(`/api/stream-thoughts?limit=${this.THOUGHT_FETCH_LIMIT}`);
+            if (!response.ok) return;
+            const data = await response.json() as { thoughts?: StreamThought[] };
+            const incoming = Array.isArray(data.thoughts) ? data.thoughts : [];
+            const beforeCount = this.streamThoughts.length;
+            incoming.forEach(thought => this.addThoughtIfNew(thought));
+            const appended = this.streamThoughts.length - beforeCount;
+            console.log(
+                `[STREAM] Thought refresh success: fetched=${incoming.length}, appended=${appended}, total=${this.streamThoughts.length}`
+            );
+        } catch (err) {
+            console.warn('[STREAM] Thought refresh failed', err);
+        } finally {
+            this.isRefreshingThoughts = false;
+        }
+    };
+
+    private addThoughtIfNew(thought: StreamThought) {
+        const text = (thought.text || '').trim();
+        if (!text) return;
+
+        const dedupeKey = this.normalizeThoughtText(text);
+        if (this.seenThoughtTexts.has(dedupeKey)) return;
+
+        this.seenThoughtTexts.add(dedupeKey);
+        this.streamThoughts.push({
+            id: thought.id || `rss-${this.idCounter++}`,
+            text,
+            source: thought.source || 'r/Showerthoughts',
+            timestamp: Number.isFinite(thought.timestamp) ? thought.timestamp : Math.floor(Date.now() / 1000)
+        });
+    }
+
+    private normalizeThoughtText(text: string) {
+        return text.toLowerCase().replace(/\s+/g, ' ').trim();
+    }
+
     private pickStreamChunkText() {
-        if (STREAM_SOURCE.length === 0) {
+        if (this.streamThoughts.length === 0) {
             return 'ambient fragment';
         }
 
-        const source = STREAM_SOURCE[this.randomInt(0, STREAM_SOURCE.length - 1)];
-        const words = source.text.trim().split(/\s+/).filter(Boolean);
-        if (words.length <= 2) return source.text;
-
-        const roll = Math.random();
-        let chunkLength = 3;
-        if (roll < 0.18) {
-            // full or near-full quote occasionally
-            chunkLength = this.randomInt(Math.max(2, words.length - 2), words.length);
-        } else if (roll < 0.48) {
-            // medium phrases
-            chunkLength = this.randomInt(4, Math.min(7, words.length));
-        } else if (roll < 0.82) {
-            // short fragments
-            chunkLength = this.randomInt(2, Math.min(4, words.length));
-        } else {
-            // long sweep fragments
-            chunkLength = this.randomInt(Math.min(6, words.length), Math.min(10, words.length));
-        }
-
-        chunkLength = Math.max(2, Math.min(words.length, Math.floor(chunkLength)));
-        const maxStart = Math.max(0, words.length - chunkLength);
-        const start = maxStart > 0 ? this.randomInt(0, maxStart) : 0;
-        return words.slice(start, start + chunkLength).join(' ');
+        const source = this.streamThoughts[this.randomInt(0, this.streamThoughts.length - 1)];
+        return source.text.trim().replace(/\s+/g, ' ');
     }
 
     private layoutFragmentWords(text: string, fontSize: number) {

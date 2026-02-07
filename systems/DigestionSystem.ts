@@ -15,6 +15,42 @@ export class DigestionSystem implements System {
 
     private speechBubble: SpeechBubble | null = null;
     private canReproduce = false;
+    private readonly AXIS_KEYS = [
+        'calm',
+        'tender',
+        'poetic',
+        'curious',
+        'bold',
+        'orderly',
+        'hopeful',
+        'social',
+        'focused',
+        'stubborn'
+    ] as const;
+    private readonly MOODS = [
+        'serene',
+        'watchful',
+        'playful',
+        'contemplative',
+        'impatient',
+        'wistful',
+        'buoyant',
+        'irritable',
+        'electric',
+        'mellow'
+    ];
+    private readonly TEMPERAMENTS = [
+        'gentle',
+        'stoic',
+        'mischievous',
+        'analytical',
+        'romantic',
+        'skeptical',
+        'wandering',
+        'disciplined',
+        'absurdist',
+        'reverent'
+    ];
 
     init(engine: Engine) {
         this.engine = engine;
@@ -48,12 +84,16 @@ export class DigestionSystem implements System {
     private handleWordRemoved = (id: string) => {
         const worm = this.engine.activeWorm;
         worm.swallowedWords = worm.swallowedWords.filter(w => w.id !== id);
+        if (Array.isArray((worm as any).digestionQueue)) {
+            (worm as any).digestionQueue = (worm as any).digestionQueue.filter((entry: any) => entry.id !== id);
+        }
         this.rebuildVocabulary();
     };
 
     private handleStomachClear = () => {
         const worm = this.engine.activeWorm;
         worm.swallowedWords = [];
+        (worm as any).digestionQueue = [];
         worm.vocabulary.clear();
         this.engine.events.emit(EVENTS.VOCAB_UPDATED, []);
     };
@@ -95,6 +135,7 @@ export class DigestionSystem implements System {
                         worm.lastMeal = dbWorm.last_meal;
                         worm.vocabulary.clear();
                         worm.swallowedWords = [];
+                        this.ensureSoulState(worm);
                     });
 
                     // Restore words to their respective worms
@@ -200,6 +241,12 @@ export class DigestionSystem implements System {
     update(dt: number) {
         const corePos = this.engine.blobState.corePos;
         const worm = this.engine.activeWorm;
+        const dtSec = Math.max(0.001, dt / 1000);
+
+        this.engine.wormState.worms.forEach(w => {
+            this.ensureSoulState(w as any);
+            this.updateDigestionStages(w as any, dtSec);
+        });
 
         // 1. Swallowed Words Physics (Floating in stomach)
         worm.swallowedWords.forEach(word => {
@@ -258,6 +305,7 @@ export class DigestionSystem implements System {
         });
 
         worm.vocabulary.add(w.text);
+        this.enqueueDigestion(worm as any, w.id, w.text);
 
         // Emit word consumed event (for satiation increase)
         this.engine.events.emit(EVENTS.WORD_CONSUMED, {});
@@ -485,6 +533,310 @@ export class DigestionSystem implements System {
         }
     }
 
+    private ensureSoulState(worm: any) {
+        if (!Array.isArray(worm.digestionQueue)) {
+            worm.digestionQueue = [];
+        }
+        if (worm.soul) return;
+
+        worm.soul = {
+            axes: {
+                calm: 0,
+                tender: 0,
+                poetic: 0,
+                curious: 0,
+                bold: 0,
+                orderly: 0,
+                hopeful: 0,
+                social: 0,
+                focused: 0,
+                stubborn: 0
+            },
+            identity: {
+                mood: 'watchful',
+                temperament: 'wandering',
+                preferences: ['mystery', 'questions'],
+                aversions: ['noise'],
+                fears: ['being forgotten'],
+                values: ['wonder', 'listening'],
+                cravings: ['meaning']
+            },
+            motto: 'Feed me gently; I am learning.',
+            absorbedCount: 0
+        };
+    }
+
+    private enqueueDigestion(worm: any, id: string, text: string) {
+        this.ensureSoulState(worm);
+        worm.digestionQueue.push({
+            id,
+            text,
+            stage: 'fresh',
+            timer: 0,
+            digestDuration: this.randomRange(8, 16),
+            applied: false,
+            absorbedAge: 0
+        });
+        if (worm.digestionQueue.length > 120) {
+            worm.digestionQueue.splice(0, worm.digestionQueue.length - 120);
+        }
+    }
+
+    private updateDigestionStages(worm: any, dtSec: number) {
+        if (!Array.isArray(worm.digestionQueue) || worm.digestionQueue.length === 0) return;
+
+        for (const entry of worm.digestionQueue) {
+            if (entry.stage === 'fresh') {
+                entry.timer += dtSec;
+                if (entry.timer >= 1.8) {
+                    entry.stage = 'digesting';
+                    entry.timer = 0;
+                }
+                continue;
+            }
+
+            if (entry.stage === 'digesting') {
+                entry.timer += dtSec;
+                if (entry.timer >= entry.digestDuration) {
+                    entry.stage = 'absorbed';
+                    entry.timer = 0;
+                }
+                continue;
+            }
+
+            if (!entry.applied) {
+                this.absorbDigestedText(worm, entry.text);
+                entry.applied = true;
+                worm.soul.absorbedCount = (worm.soul.absorbedCount || 0) + 1;
+                if (worm.soul.absorbedCount % 3 === 0) {
+                    this.regenerateIdentity(worm);
+                }
+            }
+            entry.absorbedAge += dtSec;
+        }
+
+        worm.digestionQueue = worm.digestionQueue.filter((entry: any) => entry.stage !== 'absorbed' || entry.absorbedAge < 18);
+    }
+
+    private absorbDigestedText(worm: any, text: string) {
+        const tokens = text
+            .toLowerCase()
+            .split(/\s+/)
+            .map((token: string) => token.replace(/^[^a-z0-9']+|[^a-z0-9']+$/g, ''))
+            .filter(Boolean);
+        if (tokens.length === 0) return;
+
+        const axes = worm.soul.axes;
+        const inv = 1 / Math.max(1, tokens.length);
+        const weight = 0.075;
+        const sums: Record<string, number> = {};
+        for (const key of this.AXIS_KEYS) sums[key] = 0;
+
+        for (const token of tokens) {
+            for (let i = 0; i < this.AXIS_KEYS.length; i++) {
+                const key = this.AXIS_KEYS[i];
+                sums[key] += this.hashToken(`${token}:${i}`) * weight * inv;
+            }
+            if (token.length >= 8) {
+                sums.poetic += 0.01 * inv;
+                sums.focused += 0.008 * inv;
+            }
+            if (token === 'not' || token === 'never') {
+                sums.hopeful -= 0.014 * inv;
+                sums.tender -= 0.01 * inv;
+            }
+            if (token === 'love' || token === 'gentle' || token === 'warm') {
+                sums.tender += 0.018 * inv;
+                sums.hopeful += 0.012 * inv;
+            }
+            if (token === 'chaos' || token === 'storm') {
+                sums.orderly -= 0.016 * inv;
+                sums.bold += 0.01 * inv;
+            }
+            if (token === 'silence' || token === 'alone') {
+                sums.social -= 0.014 * inv;
+                sums.calm += 0.01 * inv;
+            }
+        }
+
+        for (const key of this.AXIS_KEYS) {
+            const current = Number(axes[key]) || 0;
+            axes[key] = this.clamp(current + sums[key], -1, 1);
+        }
+        this.regenerateIdentity(worm, false);
+    }
+
+    private regenerateIdentity(worm: any, updateMotto = true) {
+        const axes = worm.soul.axes;
+        const moodScores = [
+            { label: 'serene', score: axes.calm + axes.hopeful + axes.tender * 0.5 },
+            { label: 'watchful', score: axes.focused + axes.curious * 0.6 - axes.social * 0.2 },
+            { label: 'playful', score: axes.bold + axes.curious - axes.orderly * 0.4 },
+            { label: 'contemplative', score: axes.poetic + axes.focused + axes.calm * 0.4 },
+            { label: 'impatient', score: -axes.calm + axes.bold * 0.3 },
+            { label: 'wistful', score: -axes.hopeful + axes.poetic * 0.4 },
+            { label: 'buoyant', score: axes.hopeful + axes.social * 0.5 },
+            { label: 'irritable', score: -axes.tender - axes.calm * 0.6 },
+            { label: 'electric', score: axes.bold + axes.curious + axes.social * 0.2 },
+            { label: 'mellow', score: axes.calm + axes.orderly * 0.3 - axes.bold * 0.2 }
+        ];
+        moodScores.sort((a, b) => b.score - a.score);
+        const mood = moodScores[0]?.label || this.MOODS[0];
+
+        const temperamentScores = [
+            { label: 'gentle', score: axes.tender + axes.calm },
+            { label: 'stoic', score: axes.orderly + axes.focused - axes.social * 0.2 },
+            { label: 'mischievous', score: axes.bold - axes.orderly + axes.curious * 0.3 },
+            { label: 'analytical', score: axes.focused + axes.curious + axes.orderly * 0.2 },
+            { label: 'romantic', score: axes.poetic + axes.tender },
+            { label: 'skeptical', score: -axes.hopeful + axes.focused * 0.3 },
+            { label: 'wandering', score: axes.curious - axes.orderly * 0.2 },
+            { label: 'disciplined', score: axes.orderly + axes.focused + axes.stubborn * 0.2 },
+            { label: 'absurdist', score: -axes.orderly + axes.poetic * 0.6 + axes.bold * 0.2 },
+            { label: 'reverent', score: axes.tender + axes.orderly * 0.2 + axes.hopeful * 0.3 }
+        ];
+        temperamentScores.sort((a, b) => b.score - a.score);
+        const temperament = temperamentScores[0]?.label || this.TEMPERAMENTS[0];
+
+        worm.soul.identity = {
+            mood,
+            temperament,
+            preferences: [
+                axes.curious >= 0 ? 'novelty' : 'certainty',
+                axes.poetic >= 0 ? 'beauty' : 'clarity',
+                axes.social >= 0 ? 'connection' : 'silence'
+            ],
+            aversions: [
+                axes.orderly >= 0 ? 'noise' : 'sameness',
+                axes.tender >= 0 ? 'cruelty' : 'small talk'
+            ],
+            fears: [axes.hopeful >= 0 ? 'being forgotten' : 'endlessness'],
+            values: [
+                axes.tender >= 0 ? 'tenderness' : 'precision',
+                axes.calm >= 0 ? 'patience' : 'courage',
+                axes.poetic >= 0 ? 'wonder' : 'honesty'
+            ],
+            cravings: [
+                axes.curious >= 0 ? 'meaning' : 'stability',
+                axes.social >= 0 ? 'connection' : 'distance'
+            ]
+        };
+
+        if (updateMotto) {
+            worm.soul.motto = this.buildMotto(axes, mood);
+        }
+    }
+
+    private buildMotto(axes: any, mood: string) {
+        if (axes.hopeful > 0.35) return 'I grow by what I can keep.';
+        if (axes.calm < -0.25) return 'I chase storms but live on calm.';
+        if (axes.poetic > 0.3) return 'Feed me gently; I am learning.';
+        if (mood === 'contemplative') return 'What I eat, I become.';
+        return 'I remember what survives the current.';
+    }
+
+    private hashToken(input: string) {
+        let h = 2166136261;
+        for (let i = 0; i < input.length; i++) {
+            h ^= input.charCodeAt(i);
+            h = Math.imul(h, 16777619);
+        }
+        const n = (h >>> 0) / 4294967295;
+        return n * 2 - 1;
+    }
+
+    private getHoveredWorm() {
+        let best: any = null;
+        let bestDistSq = Number.POSITIVE_INFINITY;
+        const mouse = this.engine.mousePos;
+        for (const worm of this.engine.wormState.worms.values()) {
+            const dx = mouse.x - worm.corePos.x;
+            const dy = mouse.y - worm.corePos.y;
+            const distSq = dx * dx + dy * dy;
+            const radius = this.engine.config.coreRadius * worm.sizeMultiplier * 0.62;
+            if (distSq > radius * radius) continue;
+            if (distSq < bestDistSq) {
+                best = worm;
+                bestDistSq = distSq;
+            }
+        }
+        return best;
+    }
+
+    private drawSoulHoverCard(ctx: CanvasRenderingContext2D) {
+        const worm = this.getHoveredWorm();
+        if (!worm) return;
+        this.ensureSoulState(worm);
+
+        const coreRadius = this.engine.config.coreRadius * worm.sizeMultiplier;
+        const x = worm.corePos.x;
+        const y = worm.corePos.y - coreRadius * 1.02;
+        const mood = worm.soul.identity?.mood || 'watchful';
+        const temperament = worm.soul.identity?.temperament || 'wandering';
+        const motto = worm.soul.motto || 'Feed me gently; I am learning.';
+        const digesting = Array.isArray(worm.digestionQueue)
+            ? worm.digestionQueue.filter((entry: any) => entry.stage === 'digesting').length
+            : 0;
+
+        const label = (worm.name || worm.id || 'worm').toUpperCase();
+        const title = `${label}  ${mood.toUpperCase()}`;
+        const sub = digesting > 0
+            ? `${temperament}  |  digesting ${digesting}`
+            : `${temperament}`;
+        const line3 = `"${motto}"`;
+
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+
+        ctx.font = "bold 11px 'Space Mono'";
+        const w1 = ctx.measureText(title).width;
+        ctx.font = "10px 'Space Mono'";
+        const w2 = ctx.measureText(sub).width;
+        const w3 = ctx.measureText(line3).width;
+        const width = Math.max(w1, w2, w3) + 24;
+        const height = 62;
+
+        ctx.fillStyle = 'rgba(8, 14, 28, 0.86)';
+        ctx.strokeStyle = 'rgba(120, 180, 255, 0.48)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.roundRect(-width / 2, -height / 2, width, height, 12);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(-8, height / 2);
+        ctx.lineTo(0, height / 2 + 8);
+        ctx.lineTo(8, height / 2);
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(8, 14, 28, 0.86)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(120, 180, 255, 0.48)';
+        ctx.stroke();
+
+        ctx.font = "bold 11px 'Space Mono'";
+        ctx.fillStyle = 'rgba(205, 229, 255, 0.96)';
+        ctx.fillText(title, 0, -17);
+
+        ctx.font = "10px 'Space Mono'";
+        ctx.fillStyle = 'rgba(142, 191, 252, 0.88)';
+        ctx.fillText(sub, 0, 0);
+
+        ctx.fillStyle = 'rgba(218, 234, 255, 0.9)';
+        ctx.fillText(line3, 0, 16);
+        ctx.restore();
+    }
+
+    private randomRange(min: number, max: number) {
+        return min + Math.random() * (max - min);
+    }
+
+    private clamp(value: number, min: number, max: number) {
+        return Math.max(min, Math.min(max, value));
+    }
+
     draw(ctx: CanvasRenderingContext2D) {
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
 
@@ -537,6 +889,8 @@ export class DigestionSystem implements System {
             ctx.fillText(b.text, 0, 0);
             ctx.restore();
         }
+
+        this.drawSoulHoverCard(ctx);
     }
 
     cleanup() {

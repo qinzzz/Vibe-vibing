@@ -1,15 +1,17 @@
 import { System, Worm } from '../core/types';
 import { Engine } from '../core/Engine';
-import { BLOB_CONSTANTS, COLORS } from '../constants';
+import { BLOB_CONSTANTS } from '../constants';
 import { solveIK, lerp } from '../utils/physics';
 import { computeField } from '../utils/marchingSquares';
-import { Vector2D, Leg } from '../core/types';
+import { Vector2D } from '../core/types';
 import { EVENTS } from '../core/events';
 
 export class PhysicsSystem implements System {
     private engine!: Engine;
     private gaitSequence = [0, 3, 1, 2];
     private currentGaitIdx = 0;
+    private lastTarget: { x: number; y: number } | null = null;
+    private moveStartDistance = 0;
 
     init(engine: Engine) {
         this.engine = engine;
@@ -48,16 +50,49 @@ export class PhysicsSystem implements System {
         const s = this.engine.config;
         const core = this.engine.blobState.corePos;
         const target = this.engine.blobState.targetPos;
+        const speedMultiplier = this.engine.blobState.speedMultiplier || 1;
 
         const prevCore = { ...core };
 
-        // Organic idle wobble
+        // Organic idle wobble, strongly damped at close range so nearby targets resolve quickly.
         const time = performance.now() * 0.001;
-        const wobbleX = Math.sin(time * 0.7) * 4 + Math.cos(time * 1.3) * 2;
-        const wobbleY = Math.cos(time * 0.8) * 4 + Math.sin(time * 1.1) * 2;
+        const toTargetX = target.x - core.x;
+        const toTargetY = target.y - core.y;
+        const distToTarget = Math.hypot(toTargetX, toTargetY);
+        const targetChanged = !this.lastTarget
+            || Math.abs(target.x - this.lastTarget.x) > 0.001
+            || Math.abs(target.y - this.lastTarget.y) > 0.001;
+        if (targetChanged) {
+            this.moveStartDistance = distToTarget;
+            this.lastTarget = { x: target.x, y: target.y };
+        }
 
-        core.x += (target.x + wobbleX - core.x) * s.coreLerp;
-        core.y += (target.y + wobbleY - core.y) * s.coreLerp;
+        // Short-distance assist only applies for short hops selected by the player.
+        const shortHopThreshold = 205;
+        const isShortHop = this.moveStartDistance <= shortHopThreshold;
+        const nearFactor = isShortHop ? this.clamp(1 - distToTarget / 250, 0, 1) : 0;
+        const wobbleScale = this.clamp((distToTarget - 6) / 220, 0, 1);
+        const wobbleX = (Math.sin(time * 0.7) * 4 + Math.cos(time * 1.3) * 2) * wobbleScale;
+        const wobbleY = (Math.cos(time * 0.8) * 4 + Math.sin(time * 1.1) * 2) * wobbleScale;
+
+        // Adaptive steering: near targets get a strong assist to avoid long short-range glides.
+        const closeBoost = lerp(1.2, 7.2, nearFactor);
+        const closeAssist = nearFactor * 0.02 * speedMultiplier;
+        const followLerp = this.clamp((s.coreLerp * speedMultiplier * closeBoost) + closeAssist, 0.002, 0.14);
+        const desiredX = target.x + wobbleX;
+        const desiredY = target.y + wobbleY;
+
+        core.x += (desiredX - core.x) * followLerp;
+        core.y += (desiredY - core.y) * followLerp;
+
+        // Tiny snap band for final convergence so "almost there" doesn't linger.
+        const postDx = target.x - core.x;
+        const postDy = target.y - core.y;
+        const remainingDist = Math.hypot(postDx, postDy);
+        if (isShortHop && remainingDist < 2.2) {
+            core.x = target.x;
+            core.y = target.y;
+        }
         this.engine.blobState.coreVel = { x: core.x - prevCore.x, y: core.y - prevCore.y };
 
         const legs = this.engine.blobState.legs;
@@ -221,5 +256,9 @@ export class PhysicsSystem implements System {
 
     cleanup() {
         this.engine.events.off(EVENTS.WORM_BORN, this.handleWormBorn);
+    }
+
+    private clamp(value: number, min: number, max: number) {
+        return Math.max(min, Math.min(max, value));
     }
 }

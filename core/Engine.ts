@@ -219,7 +219,9 @@ export class Engine {
 
             // Vocabulary
             vocabulary: new Set(parent ? this.inheritVocabulary(parent) : []),
-            swallowedWords: []
+            swallowedWords: [],
+            digestionQueue: [],
+            soul: this.createInitialSoul(parent)
         };
 
         this.wormState.worms.set(id, worm);
@@ -234,6 +236,103 @@ export class Engine {
         // Random selection
         const shuffled = parentWords.sort(() => Math.random() - 0.5);
         return shuffled.slice(0, inheritCount);
+    }
+
+    private createInitialSoul(parent: Worm | null) {
+        const baseAxes = parent?.soul?.axes
+            ? { ...parent.soul.axes }
+            : {
+                calm: 0,
+                tender: 0,
+                poetic: 0,
+                curious: 0,
+                bold: 0,
+                orderly: 0,
+                hopeful: 0,
+                social: 0,
+                focused: 0,
+                stubborn: 0
+            };
+
+        if (parent?.soul?.axes) {
+            for (const key of Object.keys(baseAxes) as Array<keyof typeof baseAxes>) {
+                baseAxes[key] = this.clamp(baseAxes[key] + (Math.random() * 0.16 - 0.08), -1, 1);
+            }
+        }
+
+        const identity = this.deriveIdentityFromAxes(baseAxes);
+        return {
+            axes: baseAxes,
+            identity,
+            motto: this.buildMotto(baseAxes, identity.mood),
+            absorbedCount: parent?.soul?.absorbedCount ? Math.floor(parent.soul.absorbedCount * 0.25) : 0
+        };
+    }
+
+    private deriveIdentityFromAxes(axes: {
+        calm: number;
+        tender: number;
+        poetic: number;
+        curious: number;
+        bold: number;
+        orderly: number;
+        hopeful: number;
+        social: number;
+        focused: number;
+        stubborn: number;
+    }) {
+        let mood = 'watchful';
+        if (axes.calm > 0.35 && axes.hopeful > 0.2) mood = 'serene';
+        else if (axes.poetic > 0.3 && axes.focused > 0.2) mood = 'contemplative';
+        else if (axes.bold > 0.2 && axes.curious > 0.3) mood = 'playful';
+        else if (axes.calm < -0.2) mood = 'impatient';
+        else if (axes.hopeful < -0.25) mood = 'wistful';
+
+        let temperament = 'wandering';
+        if (axes.focused > 0.35 && axes.orderly > 0.2) temperament = 'disciplined';
+        else if (axes.poetic > 0.3 && axes.tender > 0.15) temperament = 'romantic';
+        else if (axes.bold > 0.25 && axes.orderly < -0.2) temperament = 'mischievous';
+        else if (axes.orderly > 0.25 && axes.bold < 0) temperament = 'stoic';
+        else if (axes.curious > 0.3 && axes.focused > 0.1) temperament = 'analytical';
+
+        const preferences = [
+            axes.curious >= 0 ? 'novelty' : 'certainty',
+            axes.poetic >= 0 ? 'beauty' : 'clarity',
+            axes.social >= 0 ? 'connection' : 'silence'
+        ];
+        const aversions = [
+            axes.orderly >= 0 ? 'noise' : 'sameness',
+            axes.tender >= 0 ? 'cruelty' : 'small talk'
+        ];
+        const fears = [axes.hopeful >= 0 ? 'being forgotten' : 'endlessness'];
+        const values = [
+            axes.tender >= 0 ? 'tenderness' : 'precision',
+            axes.calm >= 0 ? 'patience' : 'courage',
+            axes.poetic >= 0 ? 'wonder' : 'honesty'
+        ];
+        const cravings = [axes.curious >= 0 ? 'meaning' : 'stability'];
+
+        return {
+            mood,
+            temperament,
+            preferences,
+            aversions,
+            fears,
+            values,
+            cravings
+        };
+    }
+
+    private buildMotto(axes: { calm: number; hopeful: number; poetic: number }, mood: string) {
+        if (axes.hopeful > 0.35) return 'I grow by what I can keep.';
+        if (axes.calm < -0.25) return 'I chase storms but live on calm.';
+        if (axes.poetic > 0.25) return 'Feed me gently; I am learning.';
+        if (mood === 'contemplative') return 'What I eat, I become.';
+        return 'I remember what survives the current.';
+    }
+
+    private clamp(value: number, min: number, max: number) {
+        return Math.max(min, Math.min(max, value));
     }
 
     cleanup() {
