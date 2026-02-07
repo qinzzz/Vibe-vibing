@@ -66,8 +66,8 @@ const App: React.FC = () => {
       const count = Array.isArray(payload?.headlines) ? payload.headlines.length : 0;
       const titles = Array.isArray(payload?.headlines)
         ? payload.headlines
-            .map((item: any) => (typeof item?.title === 'string' ? item.title.trim() : ''))
-            .filter((title: string) => title.length > 0)
+          .map((item: any) => (typeof item?.title === 'string' ? item.title.trim() : ''))
+          .filter((title: string) => title.length > 0)
         : [];
       if (titles.length > 0) {
         newsHeadlinePoolRef.current = titles;
@@ -230,11 +230,10 @@ const App: React.FC = () => {
                   <button
                     key={worm.id}
                     onClick={() => switchWorm(worm.id)}
-                    className={`px-3 py-2 rounded-md transition-all duration-200 ${
-                      isActive
+                    className={`px-3 py-2 rounded-md transition-all duration-200 ${isActive
                         ? 'bg-white/20 border-2'
                         : 'bg-black/60 border border-white/10 hover:bg-white/10'
-                    }`}
+                      }`}
                     style={{
                       borderColor: isActive ? `hsl(${worm.hue}, 50%, 50%)` : undefined,
                     }}
@@ -245,7 +244,7 @@ const App: React.FC = () => {
                         style={{ backgroundColor: `hsl(${worm.hue}, 50%, 50%)` }}
                       />
                       <span className="text-white/80 text-xs font-mono">
-                        {worm.name || `Gen ${worm.generation}`}
+                        {worm.name || `Cycle ${1 + worm.generation}`}
                       </span>
                       <span className="text-white/60 text-[10px]">
                         {worm.vocabulary.size}w

@@ -607,15 +607,34 @@ app.post('/api/name-worm', async (req, res) => {
 
     try {
         console.log('[NAMING] Generating name for words:', words.slice(0, 5));
-        const prompt = `Words: ${words.join(', ')}. Generate ONE poetic word capturing their essence. Word only:`;
+        // New Prompt: Abstract, one-word, mystic titles
+        const prompt = `
+        Task: Create a single-word name for a digital entity based on these consumed words.
+        Words: ${words.join(', ')}
+        
+        Guidelines:
+        1. Name must be ONE word.
+        2. Abstract, mystical, or philosophical (e.g., "Flux", "Echo", "Drift", "Cipher", "Omen").
+        3. NO "Blob", "Worm", "Glutton".
+        4. Lowercase only.
+        5. If words are random, invent a cool sounding nonsense name (e.g. "Xylos", "Vex").
+        
+        Name:`;
 
         const text = await generateText(prompt, 'name');
-        const name = text.trim().toLowerCase().replace(/[^a-z]/g, '') || 'blob';
+        let name = text.trim().toLowerCase().replace(/[^a-z]/g, '');
+
+        // Fallback filter
+        if (!name || name.includes('blob') || name.includes('worm')) {
+            const fallbacks = ['cipher', 'flux', 'echo', 'null', 'void', 'spark', 'drift'];
+            name = fallbacks[Math.floor(Math.random() * fallbacks.length)];
+        }
+
         console.log('[NAMING] ✅ Generated name:', name);
-        res.json({ name: name || 'blob' });
+        res.json({ name });
     } catch (err: any) {
         console.error("[NAMING] ❌ Failed:", err.message || err);
-        res.json({ name: 'blob' });
+        res.json({ name: 'void' });
     }
 });
 
