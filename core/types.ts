@@ -157,6 +157,19 @@ export interface Worm {
     swallowedWords: SwallowedWord[];
     digestionQueue: DigestionRecord[];
     soul: WormSoul;
+    particles: SoulParticle[];
+}
+
+export interface SoulParticle {
+    x: number;
+    y: number;
+    vx: number;
+    vy: number;
+    life: number;
+    maxLife: number;
+    size: number;
+    color: string;
+    type: 'fizz' | 'spark' | 'bubble' | 'dust' | 'heart' | 'tear';
 }
 
 export interface WormState {

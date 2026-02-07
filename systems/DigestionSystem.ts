@@ -169,6 +169,18 @@ export class DigestionSystem implements System {
                         this.ensureSoulState(worm);
                     });
 
+                    // Fix: Update nextWormId to prevent collisions
+                    let maxId = 0;
+                    data.worms.forEach((w: any) => {
+                        const parts = w.id.split('-');
+                        if (parts.length === 2 && !isNaN(parseInt(parts[1]))) {
+                            const num = parseInt(parts[1]);
+                            if (num >= maxId) maxId = num;
+                        }
+                    });
+                    this.engine.wormState.nextWormId = maxId + 1;
+                    console.log(`[HYDRATE] Syncing nextWormId to ${this.engine.wormState.nextWormId}`);
+
                     // Restore words to their respective worms
                     if (data.words) {
                         data.words.forEach((item: { id: string, worm_id: string, text: string }) => {
@@ -646,7 +658,7 @@ export class DigestionSystem implements System {
             text,
             stage: 'fresh',
             timer: 0,
-            digestDuration: this.randomRange(8, 16),
+            digestDuration: this.randomRange(2, 5), // Much faster digestion (was 8-16)
             applied: false,
             absorbedAge: 0
         });
@@ -661,7 +673,7 @@ export class DigestionSystem implements System {
         for (const entry of worm.digestionQueue) {
             if (entry.stage === 'fresh') {
                 entry.timer += dtSec;
-                if (entry.timer >= 1.8) {
+                if (entry.timer >= 0.5) { // Faster fresh stage (was 1.8)
                     entry.stage = 'digesting';
                     entry.timer = 0;
                 }
@@ -681,9 +693,7 @@ export class DigestionSystem implements System {
                 this.absorbDigestedText(worm, entry.text);
                 entry.applied = true;
                 worm.soul.absorbedCount = (worm.soul.absorbedCount || 0) + 1;
-                if (worm.soul.absorbedCount % 3 === 0) {
-                    this.regenerateIdentity(worm);
-                }
+                this.regenerateIdentity(worm); // Update identity on EVERY absorption
             }
             entry.absorbedAge += dtSec;
         }
@@ -701,7 +711,7 @@ export class DigestionSystem implements System {
 
         const axes = worm.soul.axes;
         const inv = 1 / Math.max(1, tokens.length);
-        const weight = 0.075;
+        const weight = 0.25; // Much stronger weight (was 0.075)
         const sums: Record<string, number> = {};
         for (const key of this.AXIS_KEYS) sums[key] = 0;
 
@@ -710,30 +720,32 @@ export class DigestionSystem implements System {
                 const key = this.AXIS_KEYS[i];
                 sums[key] += this.hashToken(`${token}:${i}`) * weight * inv;
             }
+            // All specific keyword weights tripled
             if (token.length >= 8) {
-                sums.poetic += 0.01 * inv;
-                sums.focused += 0.008 * inv;
+                sums.poetic += 0.03 * inv;
+                sums.focused += 0.024 * inv;
             }
             if (token === 'not' || token === 'never') {
-                sums.hopeful -= 0.014 * inv;
-                sums.tender -= 0.01 * inv;
+                sums.hopeful -= 0.042 * inv;
+                sums.tender -= 0.03 * inv;
             }
             if (token === 'love' || token === 'gentle' || token === 'warm') {
-                sums.tender += 0.018 * inv;
-                sums.hopeful += 0.012 * inv;
+                sums.tender += 0.054 * inv;
+                sums.hopeful += 0.036 * inv;
             }
             if (token === 'chaos' || token === 'storm') {
-                sums.orderly -= 0.016 * inv;
-                sums.bold += 0.01 * inv;
+                sums.orderly -= 0.048 * inv;
+                sums.bold += 0.03 * inv;
             }
             if (token === 'silence' || token === 'alone') {
-                sums.social -= 0.014 * inv;
-                sums.calm += 0.01 * inv;
+                sums.social -= 0.042 * inv;
+                sums.calm += 0.03 * inv;
             }
         }
 
         for (const key of this.AXIS_KEYS) {
             const current = Number(axes[key]) || 0;
+            // More loose clamping to allow faster shifts, but still bounded
             axes[key] = this.clamp(current + sums[key], -1, 1);
         }
         this.regenerateIdentity(worm, false);

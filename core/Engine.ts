@@ -221,7 +221,8 @@ export class Engine {
             vocabulary: new Set(parent ? this.inheritVocabulary(parent) : []),
             swallowedWords: [],
             digestionQueue: [],
-            soul: this.createInitialSoul(parent)
+            soul: this.createInitialSoul(parent),
+            particles: []
         };
 
         this.wormState.worms.set(id, worm);
