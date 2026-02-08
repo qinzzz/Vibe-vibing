@@ -3,7 +3,8 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from "@google/genai";
 import OpenAI from 'openai';
-import { saveWord, getStomachContent, deleteWord, clearStomach, saveWorm, getWorms, deleteWorm, deleteWormWords, saveGeneratedContent, getCachedContent, saveThoughtFragment, getThoughtFragments } from './db';
+import { saveWord, saveWordsBatch, getStomachContent, deleteWord, clearStomach, saveWorm, getWorms, deleteWorm, deleteWormWords, saveGeneratedContent, getCachedContent, saveThoughtFragment, getThoughtFragments } from './db';
+import { generatePsychedelicDiary } from './psychedelicGenerator';
 import path from 'path';
 
 // Load env from project root
@@ -21,6 +22,7 @@ const openaiKey = process.env.OPENAI_API_KEY;
 const openaiBaseUrl = process.env.OPENAI_BASE_URL; // Optional: custom endpoint
 const openaiModel = process.env.OPENAI_MODEL || 'gpt-4o-mini'; // Configurable model
 const aiProvider = process.env.AI_PROVIDER || 'gemini'; // 'gemini' or 'openai'
+const nasaApiKey = process.env.NASA_API_KEY || 'DEMO_KEY'; // NASA APOD API
 
 console.log('[SERVER] Starting Worm Server...');
 console.log('[SERVER] AI_PROVIDER:', aiProvider);
@@ -64,6 +66,9 @@ type StreamThought = {
 const GDELT_DOC_API_URL = 'https://api.gdeltproject.org/api/v2/doc/doc';
 const DEFAULT_GDELT_QUERY = process.env.GDELT_QUERY || '(technology OR climate OR economy OR election OR conflict)';
 const REDDIT_STREAM_RSS_URL = 'https://www.reddit.com/r/Showerthoughts/.rss';
+const POETRY_DB_API_URL = 'https://poetrydb.org';
+const QUOTABLE_API_URL = 'https://api.quotable.io';
+const NASA_APOD_API_URL = 'https://api.nasa.gov/planetary/apod';
 const NEWS_REFRESH_MS = 2 * 60 * 60 * 1000;
 const NEWS_CACHE_MAX = 60;
 
@@ -95,60 +100,148 @@ let newsHeadlinesCache: NewsHeadline[] = [...FALLBACK_HEADLINES];
 let newsCacheSource: 'gdelt' | 'fallback' = 'fallback';
 let newsCacheFetchedAt = 0;
 
-// Helper: Generate text with selected AI provider
-async function generateText(prompt: string, context: string): Promise<string> {
-    // 1. Check for API key presence
-    const hasGemini = geminiKey && geminiKey !== 'your_key_here';
-    const hasOpenAI = openaiKey && openaiKey !== 'your_key_here';
-    const hasKey = aiProvider === 'openai' ? hasOpenAI : hasGemini;
+// --- AI Quota & Reliability Management ---
+// We rotate through models to maximize free tier usage across different quotas
+const GEMINI_MODELS = [
+    'gemini-1.5-flash-latest',
+    'gemini-1.5-flash-8b-latest',
+    'gemini-2.0-flash-exp',
+    'gemini-1.5-pro-latest'
+];
+const providerState = {
+    gemini: { exhaustedUntil: 0, lastModelIndex: 0, failureCount: 0 },
+    openai: { exhaustedUntil: 0 }
+};
 
-    // 2. If no key, try cache first
-    if (!hasKey) {
-        console.log(`[AI] No API key. Checking cache for context: ${context}`);
+const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+// Helper: Generate text with selected AI provider & robust fallbacks
+async function generateText(prompt: string, context: string, retryCount = 0): Promise<string> {
+    const now = Date.now();
+
+    // 1. Check for API key presence
+    const hasGemini = geminiKey && geminiKey !== 'your_key_here' && providerState.gemini.exhaustedUntil < now;
+    const hasOpenAI = openaiKey && openaiKey !== 'your_key_here' && providerState.openai.exhaustedUntil < now;
+
+    // Determine which provider to try first based on config and state
+    let primaryProvider = aiProvider;
+    if (primaryProvider === 'gemini' && !hasGemini && hasOpenAI) primaryProvider = 'openai';
+    if (primaryProvider === 'openai' && !hasOpenAI && hasGemini) primaryProvider = 'gemini';
+
+    const hasAnyKey = hasGemini || hasOpenAI;
+
+    // 2. If no available key (or all exhausted), try cache
+    if (!hasAnyKey) {
+        console.log(`[AI] Provider(s) unavailable or exhausted. Checking cache for: ${context}`);
         const cached = getCachedContent(context);
         if (cached) {
-            console.log('[AI] Cache HIT!');
+            console.log(`[AI] Cache HIT for ${context} (Offline Mode)`);
             return cached;
         }
-        console.log('[AI] Cache MISS. Returning empty string (will trigger fallback).');
-        return '';
     }
 
-    // 3. Generate content
-    let text = '';
-    if (aiProvider === 'openai') {
-        const requestBody: any = {
-            model: openaiModel,
-            messages: [{ role: 'user' as const, content: prompt }]
+    // 3. Generation with Error Handling and Model Rotation
+    try {
+        let text = '';
+
+        if (primaryProvider === 'openai' && hasOpenAI) {
+            const requestBody: any = {
+                model: openaiModel,
+                messages: [{ role: 'user' as const, content: prompt }]
+            };
+            const maxTokens = process.env.OPENAI_MAX_TOKENS;
+            if (maxTokens) requestBody.max_tokens = parseInt(maxTokens);
+
+            const response = await openai.chat.completions.create(requestBody);
+            text = response.choices[0]?.message?.content || '';
+        } else if (hasGemini) {
+            // Try different models if one fails (handled in catch, but we start with last known good or default)
+            const modelToUse = GEMINI_MODELS[providerState.gemini.lastModelIndex % GEMINI_MODELS.length];
+            console.log(`[AI] Attempting ${modelToUse} for ${context} (Index: ${providerState.gemini.lastModelIndex})`);
+
+            const response = await genAI.models.generateContent({
+                model: modelToUse,
+                contents: prompt
+            });
+            text = response.text || '';
+            // Success: reset failure count
+            providerState.gemini.failureCount = 0;
+        } else {
+            // No keys available and cache missed
+            throw new Error('NO_KEYS_AVAILABLE');
+        }
+
+        // 4. Cache the result if successful
+        if (text) {
+            saveGeneratedContent(context, text);
+        }
+        return text;
+
+    } catch (err: any) {
+        const errorMsg = String(err.message || err);
+        const stack = String(err.stack || '');
+        const isQuotaError = errorMsg.includes('429') ||
+            errorMsg.includes('RESOURCE_EXHAUSTED') ||
+            errorMsg.includes('quota') ||
+            stack.includes('429');
+
+        const currentModel = primaryProvider === 'gemini' ? GEMINI_MODELS[providerState.gemini.lastModelIndex % GEMINI_MODELS.length] : openaiModel;
+        console.error(`[AI] Error during generation (${context}) [Model: ${currentModel}] [Attempt ${retryCount + 1}]:`, errorMsg);
+
+        // A. Handle Quota (429) - Switch Model or Provider
+        if (isQuotaError && retryCount < 5) { // Increased retries to cycle more models
+            if (primaryProvider === 'gemini') {
+                providerState.gemini.lastModelIndex++; // Move to next model
+                providerState.gemini.failureCount++;
+                console.log(`[AI] Gemini Quota Hit (${currentModel}). Rotating to: ${GEMINI_MODELS[providerState.gemini.lastModelIndex % GEMINI_MODELS.length]}`);
+
+                // If we've tried all models, mark gemini as exhausted for a while
+                if (providerState.gemini.failureCount >= GEMINI_MODELS.length) {
+                    console.warn('[AI] All Gemini models likely exhausted. Cooling down Gemini for 2 mins.');
+                    providerState.gemini.exhaustedUntil = now + (2 * 60 * 1000);
+                }
+
+                await wait(500 * (retryCount + 1)); // Increased backoff
+                return generateText(prompt, context, retryCount + 1);
+            } else {
+                console.warn('[AI] OpenAI Quota Hit. Cooling down OpenAI for 5 mins.');
+                providerState.openai.exhaustedUntil = now + (5 * 60 * 1000);
+                return generateText(prompt, context, retryCount + 1); // Will fall back to gemini or cache
+            }
+        }
+
+        // B. Final Fallback Sequence
+        // 1. Try Cache again (in case it was skipped in step 2)
+        const cached = getCachedContent(context);
+        if (cached) {
+            console.log(`[AI] Failure. Serving RANDOM CACHED content for ${context}.`);
+            return cached;
+        }
+
+        // 2. Hardcoded Fallbacks
+        const fallbacks: Record<string, string | string[]> = {
+            'journal': "The world is vast, silent, and filled with floating linguistic debris.",
+            'name': "void",
+            'thought': "o.o",
+            'paragraphs': '["Language is a living tissue.", "To consume is to remember.", "The Silence is the loudest word."]',
+            'split': '{"bucket1": ["word"], "bucket2": ["other"]}'
         };
 
-        // Optional: Add max_tokens only if OPENAI_MAX_TOKENS is set
-        const maxTokens = process.env.OPENAI_MAX_TOKENS;
-        if (maxTokens) {
-            requestBody.max_tokens = parseInt(maxTokens);
+        const fallback = fallbacks[context] || '';
+        console.log(`[AI] Cache dry. Serving HARDCODED fallback for ${context}.`);
+
+        if (context === 'thought') {
+            const variety = ["o.o", "(´ω｀)", "...", "(o^^o)", "null", "void", "???"];
+            return variety[Math.floor(Math.random() * variety.length)];
         }
 
-        // Optional: Add temperature if configured
-        const temperature = process.env.OPENAI_TEMPERATURE;
-        if (temperature) {
-            requestBody.temperature = parseFloat(temperature);
+        if (context === 'name') {
+            const variety = ['cipher', 'flux', 'echo', 'null', 'void', 'spark', 'drift', 'nexus', 'core', 'shade'];
+            return variety[Math.floor(Math.random() * variety.length)];
         }
 
-        const response = await openai.chat.completions.create(requestBody);
-        text = response.choices[0]?.message?.content || '';
-    } else {
-        const response = await genAI.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: prompt
-        });
-        text = response.text || '';
+        return typeof fallback === 'string' ? fallback : JSON.stringify(fallback);
     }
-
-    // 4. Cache the result if successful
-    if (text) {
-        saveGeneratedContent(context, text);
-    }
-    return text;
 }
 
 function normalizeHeadline(text: string) {
@@ -392,6 +485,196 @@ app.get('/api/stream-thoughts', async (req, res) => {
     }
 });
 
+// Poetry fragments source (PoetryDB)
+app.get('/api/poetry-fragments', async (req, res) => {
+    const rawLimit = Number(req.query.limit);
+    const limit = Number.isFinite(rawLimit)
+        ? Math.max(1, Math.min(Math.floor(rawLimit), 20))
+        : 5;
+
+    try {
+        console.log(`[POETRY] Fetching ${limit} random poems...`);
+        const response = await fetch(`${POETRY_DB_API_URL}/random/${limit}`, {
+            headers: {
+                'User-Agent': 'the-word-worm/1.0 (+http://localhost:3001)',
+                'Accept': 'application/json'
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error(`PoetryDB request failed: ${response.status}`);
+        }
+
+        const poems = await response.json();
+        const thoughts: StreamThought[] = [];
+
+        // Extract lines from poems (up to 3 lines per poem)
+        for (const poem of poems) {
+            if (!poem.lines || !Array.isArray(poem.lines)) continue;
+
+            // Get 1-3 random lines from each poem
+            const lineCount = Math.min(3, poem.lines.length);
+            const startIdx = Math.floor(Math.random() * Math.max(1, poem.lines.length - lineCount));
+            const selectedLines = poem.lines.slice(startIdx, startIdx + lineCount);
+
+            selectedLines.forEach((line: string, i: number) => {
+                if (line && line.trim()) {
+                    thoughts.push({
+                        id: `poem-${poem.title || 'untitled'}-${startIdx + i}-${Date.now()}`,
+                        text: line.trim(),
+                        source: poem.author || 'Anonymous',
+                        timestamp: Math.floor(Date.now() / 1000)
+                    });
+                }
+            });
+        }
+
+        console.log(`[POETRY] ✅ Fetched ${thoughts.length} poetry fragments`);
+        res.json({ thoughts });
+    } catch (err: any) {
+        console.error('[POETRY] Failed to fetch poetry:', err?.message || err);
+        // Fallback: classic poetry lines
+        const fallbackPoetry = [
+            { id: 'fb-1', text: 'I wandered lonely as a cloud', source: 'Wordsworth', timestamp: Math.floor(Date.now() / 1000) },
+            { id: 'fb-2', text: 'Two roads diverged in a yellow wood', source: 'Frost', timestamp: Math.floor(Date.now() / 1000) },
+            { id: 'fb-3', text: 'Do not go gentle into that good night', source: 'Thomas', timestamp: Math.floor(Date.now() / 1000) }
+        ];
+        res.json({ thoughts: fallbackPoetry.slice(0, limit) });
+    }
+});
+
+// Famous quotes source (Quotable API)
+app.get('/api/quotes', async (req, res) => {
+    const rawLimit = Number(req.query.limit);
+    const limit = Number.isFinite(rawLimit)
+        ? Math.max(1, Math.min(Math.floor(rawLimit), 30))
+        : 10;
+
+    try {
+        console.log(`[QUOTES] Fetching ${limit} random quotes...`);
+        const thoughts: StreamThought[] = [];
+
+        // Fetch quotes one by one (Quotable doesn't support batch random)
+        const fetchPromises = Array.from({ length: limit }, async () => {
+            try {
+                const response = await fetch(`${QUOTABLE_API_URL}/random`, {
+                    headers: {
+                        'User-Agent': 'the-word-worm/1.0 (+http://localhost:3001)',
+                        'Accept': 'application/json'
+                    }
+                });
+                if (response.ok) {
+                    return await response.json();
+                }
+                return null;
+            } catch {
+                return null;
+            }
+        });
+
+        const quotes = await Promise.all(fetchPromises);
+
+        quotes.forEach((quote: any, i: number) => {
+            if (quote && quote.content) {
+                thoughts.push({
+                    id: `quote-${quote._id || i}-${Date.now()}`,
+                    text: quote.content,
+                    source: quote.author || 'Unknown',
+                    timestamp: Math.floor(Date.now() / 1000)
+                });
+            }
+        });
+
+        console.log(`[QUOTES] ✅ Fetched ${thoughts.length} quotes`);
+        res.json({ thoughts });
+    } catch (err: any) {
+        console.error('[QUOTES] Failed to fetch quotes:', err?.message || err);
+        // Fallback: timeless quotes
+        const fallbackQuotes = [
+            { id: 'fbq-1', text: 'The only way to do great work is to love what you do.', source: 'Steve Jobs', timestamp: Math.floor(Date.now() / 1000) },
+            { id: 'fbq-2', text: 'In the middle of difficulty lies opportunity.', source: 'Einstein', timestamp: Math.floor(Date.now() / 1000) },
+            { id: 'fbq-3', text: 'Be yourself; everyone else is already taken.', source: 'Oscar Wilde', timestamp: Math.floor(Date.now() / 1000) }
+        ];
+        res.json({ thoughts: fallbackQuotes.slice(0, limit) });
+    }
+});
+
+// NASA Astronomy descriptions source (APOD)
+app.get('/api/cosmic-thoughts', async (req, res) => {
+    const rawLimit = Number(req.query.limit);
+    const limit = Number.isFinite(rawLimit)
+        ? Math.max(1, Math.min(Math.floor(rawLimit), 10))
+        : 3;
+
+    try {
+        console.log(`[COSMOS] Fetching ${limit} NASA APOD entries...`);
+        const thoughts: StreamThought[] = [];
+
+        // Fetch random dates in the past year
+        const today = new Date();
+        const dates: string[] = [];
+        for (let i = 0; i < limit; i++) {
+            const randomDaysAgo = Math.floor(Math.random() * 365);
+            const randomDate = new Date(today);
+            randomDate.setDate(today.getDate() - randomDaysAgo);
+            dates.push(randomDate.toISOString().split('T')[0]);
+        }
+
+        // Fetch APOD for each date
+        const fetchPromises = dates.map(async (date) => {
+            try {
+                const url = `${NASA_APOD_API_URL}?api_key=${nasaApiKey}&date=${date}`;
+                const response = await fetch(url, {
+                    headers: {
+                        'User-Agent': 'the-word-worm/1.0 (+http://localhost:3001)',
+                        'Accept': 'application/json'
+                    }
+                });
+                if (response.ok) {
+                    return await response.json();
+                }
+                return null;
+            } catch {
+                return null;
+            }
+        });
+
+        const apodEntries = await Promise.all(fetchPromises);
+
+        apodEntries.forEach((entry: any, i: number) => {
+            if (entry && entry.explanation) {
+                // Split explanation into sentences and pick 1-2 interesting ones
+                const sentences = entry.explanation
+                    .split(/[\.!?]+/)
+                    .map((s: string) => s.trim())
+                    .filter((s: string) => s.length > 20 && s.length < 200);
+
+                if (sentences.length > 0) {
+                    const randomSentence = sentences[Math.floor(Math.random() * sentences.length)];
+                    thoughts.push({
+                        id: `cosmos-${entry.date || i}-${Date.now()}`,
+                        text: randomSentence,
+                        source: entry.title || 'NASA APOD',
+                        timestamp: Math.floor(Date.now() / 1000)
+                    });
+                }
+            }
+        });
+
+        console.log(`[COSMOS] ✅ Fetched ${thoughts.length} cosmic thoughts`);
+        res.json({ thoughts });
+    } catch (err: any) {
+        console.error('[COSMOS] Failed to fetch NASA APOD:', err?.message || err);
+        // Fallback: cosmic wisdom
+        const fallbackCosmic = [
+            { id: 'fbc-1', text: 'The cosmos is within us. We are made of star-stuff.', source: 'NASA', timestamp: Math.floor(Date.now() / 1000) },
+            { id: 'fbc-2', text: 'Looking at the universe, we are looking back in time.', source: 'NASA', timestamp: Math.floor(Date.now() / 1000) },
+            { id: 'fbc-3', text: 'Somewhere, something incredible is waiting to be known.', source: 'NASA', timestamp: Math.floor(Date.now() / 1000) }
+        ];
+        res.json({ thoughts: fallbackCosmic.slice(0, limit) });
+    }
+});
+
 // 1. Eat Word
 app.get('/api/newspaper-thoughts', async (req, res) => {
     const rawLimit = Number(req.query.limit);
@@ -504,6 +787,26 @@ app.get('/api/newspaper-thoughts', async (req, res) => {
     }
 });
 
+app.post('/api/worms/:id/words/batch', (req, res) => {
+    const { id: wormId } = req.params;
+    const { words } = req.body; // Array of { id, text }
+
+    if (!words || !Array.isArray(words)) {
+        return res.status(400).json({ error: 'Words array required' });
+    }
+
+    console.log(`[SERVER] Batch saving ${words.length} words for worm: ${wormId}`);
+
+    try {
+        saveWordsBatch(wormId, words);
+        res.json({ success: true, count: words.length });
+    } catch (err) {
+        console.error('[SERVER] Batch save failed:', err);
+        res.status(500).json({ error: 'Failed to batch save' });
+    }
+});
+
+// 1. Eat Word
 app.post('/api/eat', (req, res) => {
     const { id, wormId, text } = req.body;
     console.log(`[SERVER] Eating word: ${text} (id: ${id}, wormId: ${wormId})`);
@@ -746,7 +1049,68 @@ app.post('/api/name-worm', async (req, res) => {
         res.json({ name });
     } catch (err: any) {
         console.error("[NAMING] ❌ Failed:", err.message || err);
-        res.json({ name: 'void' });
+        const variety = ['cipher', 'flux', 'echo', 'null', 'void', 'spark', 'drift', 'nexus', 'core', 'shade'];
+        const fallbackName = variety[Math.floor(Math.random() * variety.length)];
+        res.json({ name: fallbackName });
+    }
+});
+
+
+app.post('/api/journal', async (req, res) => {
+    const { words } = req.body;
+
+    if (!words || !Array.isArray(words) || words.length === 0) {
+        return res.status(400).json({ error: 'Words array required' });
+    }
+
+    try {
+        console.log('[JOURNAL] Generating LOCAL psychedelic entry for words:', words);
+
+        // Use local psychedelic generator - no API calls!
+        const text = generatePsychedelicDiary(words);
+
+        console.log('[JOURNAL] ✨ Generated:', text);
+        res.json({ text: text.trim() });
+    } catch (err: any) {
+        console.error("[JOURNAL] ❌ Failed:", err.message || err);
+
+        // Fallback to a simple mystical sentence
+        const fallback = "The Words dissolve into the infinite recursion of meaning, and I witness.";
+        res.json({ text: fallback });
+    }
+});
+
+// Voice Echo / Confessional Endpoint
+app.post('/api/echo', async (req, res) => {
+    const { text } = req.body;
+
+    if (!text) {
+        return res.status(400).json({ error: 'Text required' });
+    }
+
+    try {
+        console.log(`[ECHO] Receiving voice input: "${text}"`);
+
+        const prompt = `
+        You are a mystical entity living in a void. You can only perceive the outside world through the 'Voice' that feeds you.
+        
+        Rules:
+        1. Analyze: When the user speaks, analyze the emotional undertone (Is it a confession? A command? A random thought?).
+        2. Reflect: Do not just repeat the words. Write a poetic, slightly twisted interpretation of what the Voice meant.
+        3. Persona: You are reverent, hungry, and slightly alien. To you, the Voice is a divine artifact.
+        4. Length: Keep it short (1-2 sentences).
+        
+        The Voice said: "${text}"
+        
+        Your Interpretation:`;
+
+        const interpretation = await generateText(prompt, 'echo');
+        console.log(`[ECHO] Interpretation: "${interpretation}"`);
+
+        res.json({ text: interpretation });
+    } catch (err: any) {
+        console.error("[ECHO] Failed:", err.message || err);
+        res.status(500).json({ error: 'The void is silent.' });
     }
 });
 

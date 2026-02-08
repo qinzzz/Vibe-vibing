@@ -7,8 +7,12 @@ import { DigestionSystem } from '../systems/DigestionSystem';
 import { CursorSystem } from '../systems/CursorSystem';
 import { WormLifecycleSystem } from '../systems/WormLifecycleSystem';
 import { ConsciousnessStreamSystem } from '../systems/ConsciousnessStreamSystem';
+import { BlackHoleSystem } from '../systems/BlackHoleSystem';
 import { AudioService } from '../services/AudioService';
 import { ThoughtService } from '../services/ThoughtService';
+import { VoiceInputSystem } from '../systems/VoiceInputSystem';
+import { VoiceVisualsSystem } from '../systems/VoiceVisualsSystem';
+import { UIPredatorSystem } from '../systems/UIPredatorSystem';
 
 export const useEngine = (config: GameConfig, onWordSwallowed?: (word: string) => void) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -24,11 +28,15 @@ export const useEngine = (config: GameConfig, onWordSwallowed?: (word: string) =
 
         // Add Systems (Order matters!)
         engine.addSystem(new ConsciousnessStreamSystem());
+        engine.addSystem(new BlackHoleSystem()); // Black holes and gravitational effects
         engine.addSystem(new PhysicsSystem());
         engine.addSystem(new BackgroundSystem());
         engine.addSystem(new DigestionSystem());
         engine.addSystem(new WormLifecycleSystem());
         engine.addSystem(new CursorSystem());
+        engine.addSystem(new VoiceInputSystem());
+        engine.addSystem(new VoiceVisualsSystem());
+        engine.addSystem(new UIPredatorSystem());
 
         // Add Services (Side effects)
         new AudioService(engine.events);

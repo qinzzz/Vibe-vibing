@@ -11,6 +11,9 @@ https://drive.google.com/file/d/1r8LMT41pRHPPxybeuBLHDNtvokcxeEOz/view?usp=shari
 https://drive.google.com/file/d/1PsFIl-EuADG1OtTtPpq5TQeVCs2g9Eqr/view?usp=drivesdk
 Apologies for no audio 😅, changelog below
 
+## Walkthrough Video (Day 5)
+https://drive.google.com/file/d/1eWAtCrgZl4Z4S60yvQyBVVEwrSy44pxA/view?usp=sharing
+
 ## 🌌 The Concept
 The **Word Worm** is an interactive, generative art experience featuring a biological-digital hybrid entity that roams a void filled with linguistic debris. As the user, you guide this creature to consume floating fragments of language. Each word consumed is stored in its "stomach" (a persistent database), slowly rebuilding the AI's internal vocabulary and influencing its emerging personality.
 
@@ -114,6 +117,28 @@ Infra:
 * **Offline / No-Key Support**:
   * The app now supports a **Replay Mode** when no API key is provided. It will serve cached AI responses instead of failing, allowing the app to run offline or for users without keys.
   * Implemented cache limits to prevent bloated database sizes.
+
+### Day 5 - Fuma
+
+Functionality:
+
+* **Voice Input Integration**:
+  * Implemented real-time **Voice Interaction** using the Web Speech API. You can now speak to the worm, and your words will materialize or influence the environment.
+  * Added **Audio-Reactive Visuals** via Web Audio API. Particle systems and environmental effects now pulse and shift based on input volume and pitch.
+* **Singularity Shift (Cosmic Horror Theme)**:
+  * **Black Holes**: Added gravitational singularities that distort spacetime and "spaghettify" nearby text.
+  * **Wormhole Traversal**: The worm can now travel through black holes, teleporting across the vast void.
+  * **Edible Dark Matter**: Ambient words orbiting black holes are now interactive and can be consumed to feed the worm.
+* **Dream System**:
+  * Implemented a **Dream Journal** (Labyrinth) to track the entity's subconscious state and "echoed" thoughts.
+* **The UI Parasite (Meta-Biology)**:
+  * **Cursor Predation**: The worm can now break the fourth wall. If ignored or hungry, it will aggressively hunt your mouse cursor. If caught, you must shake your mouse to struggle free.
+  * **Digital Infection**: As the worm crawls over UI elements (titles, buttons, panels), it causes them to experience visual "glitches," chromatic aberration, and data corruption.
+
+Systems & Design:
+
+* **Physics Engine Upgrade**: Added radial gravity fields and orbital mechanics for ambient text.
+* **Audio Analysis**: Created a `VoiceInputSystem` that processes raw audio data for game logic and visuals.
 
 ## 🛤 Future Roadmap (Suggested Steps)
 We are constantly looking to evolve the Glutton's consciousness. Some planned/suggested enhancements include:

@@ -608,7 +608,7 @@ export class ConsciousnessStreamSystem implements System {
             depth,
             fontSize,
             width,
-            height: fontSize * 1.08,
+            height: wordLayout.totalHeight,
             baseRotation: this.degToRad(this.randomRange(-24, 24)),
             rotationWobbleAmp: this.degToRad(this.randomRange(2.2, 5.5)),
             rotationWobbleSpeed: this.randomRange(0.35, 0.92),
@@ -849,7 +849,9 @@ export class ConsciousnessStreamSystem implements System {
                 if (word.consumed) continue;
 
                 const halfW = word.width * 0.5 + padding;
+                const halfH = (fragment.fontSize * 1.2) * 0.5 + padding;
                 if (local.x < word.xOffset - halfW || local.x > word.xOffset + halfW) continue;
+                if (local.y < word.yOffset - halfH || local.y > word.yOffset + halfH) continue;
 
                 const score = fragment.depth * 1.4 - fragment.age * 0.01;
                 if (score > bestScore) {
