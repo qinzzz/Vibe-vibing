@@ -272,7 +272,7 @@ const App: React.FC = () => {
   return (
     <div className="relative w-full h-screen bg-black overflow-hidden flex flex-col">
       <div className="absolute top-6 left-1/2 -translate-x-1/2 z-10 pointer-events-none text-center">
-        <h1 className="text-white text-2xl font-bold tracking-tight opacity-80 uppercase italic font-mono-custom">
+        <h1 className="text-white text-2xl font-bold tracking-tight opacity-80 uppercase italic font-mono-custom" data-glitch-target="true">
           The Word Worm
         </h1>
         <p className="text-blue-400 text-sm font-medium mt-1">
@@ -291,10 +291,11 @@ const App: React.FC = () => {
             }
           }}
           className={`p-3 rounded-full transition-all duration-300 border ${isMicActive
-              ? 'bg-red-500/20 border-red-500 text-red-400 animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.4)]'
-              : 'bg-white/5 border-white/10 text-white/40 hover:bg-white/10 hover:text-white'
+            ? 'bg-red-500/20 border-red-500 text-red-400 animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.4)]'
+            : 'bg-white/5 border-white/10 text-white/40 hover:bg-white/10 hover:text-white'
             }`}
           title={isMicActive ? "Voice Input Active (Listening...)" : "Enable Voice Input"}
+          data-glitch-target="true"
         >
           {isMicActive ? (
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>
@@ -482,6 +483,7 @@ const App: React.FC = () => {
                 style={{
                   borderColor: isActive ? `hsl(${worm.hue}, 50%, 50%)` : undefined,
                 }}
+                data-glitch-target="true"
               >
                 <div className="flex items-center gap-2">
                   <div
@@ -529,7 +531,7 @@ const App: React.FC = () => {
 
         <div className="w-[260px] h-full bg-black/80 backdrop-blur-xl border-r border-white/10 p-6 flex flex-col overflow-hidden">
           <div className="flex justify-between items-center mb-6">
-            <h2 className="text-white font-bold text-sm flex items-center gap-2">
+            <h2 className="text-white font-bold text-sm flex items-center gap-2" data-glitch-target="true">
               <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
               STOMACH
             </h2>
@@ -583,7 +585,7 @@ const App: React.FC = () => {
         </button>
 
         <div className="w-[300px] h-full bg-black/80 backdrop-blur-xl border-l border-white/10 p-6 overflow-y-auto custom-scrollbar">
-          <h2 className="text-white font-bold text-sm mb-6 flex items-center gap-2">
+          <h2 className="text-white font-bold text-sm mb-6 flex items-center gap-2" data-glitch-target="true">
             <span className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></span>
             GLUTTON CONFIG
           </h2>

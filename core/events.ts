@@ -66,5 +66,11 @@ export const EVENTS = {
     VOICE_WORD_SPAWNED: 'VOICE_WORD_SPAWNED', // A word was recognized and should spawn
     VOICE_PARTICLE_STREAM: 'VOICE_PARTICLE_STREAM', // Realtime particles for breath
     VOICE_INTERIM_RESULT: 'VOICE_INTERIM_RESULT', // Interim recognition results
-    VOICE_COMMAND_RECOGNIZED: 'VOICE_COMMAND_RECOGNIZED' // If we have specific commands
+    VOICE_COMMAND_RECOGNIZED: 'VOICE_COMMAND_RECOGNIZED', // If we have specific commands
+    // UI Predator System
+    CURSOR_STALK_START: 'CURSOR_STALK_START',
+    CURSOR_CAPTURED: 'CURSOR_CAPTURED',
+    CURSOR_RELEASED: 'CURSOR_RELEASED',
+    UI_GLITCH_START: 'UI_GLITCH_START',
+    UI_GLITCH_END: 'UI_GLITCH_END'
 } as const;

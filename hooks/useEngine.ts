@@ -12,6 +12,7 @@ import { AudioService } from '../services/AudioService';
 import { ThoughtService } from '../services/ThoughtService';
 import { VoiceInputSystem } from '../systems/VoiceInputSystem';
 import { VoiceVisualsSystem } from '../systems/VoiceVisualsSystem';
+import { UIPredatorSystem } from '../systems/UIPredatorSystem';
 
 export const useEngine = (config: GameConfig, onWordSwallowed?: (word: string) => void) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -35,6 +36,7 @@ export const useEngine = (config: GameConfig, onWordSwallowed?: (word: string) =
         engine.addSystem(new CursorSystem());
         engine.addSystem(new VoiceInputSystem());
         engine.addSystem(new VoiceVisualsSystem());
+        engine.addSystem(new UIPredatorSystem());
 
         // Add Services (Side effects)
         new AudioService(engine.events);

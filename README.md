@@ -11,6 +11,9 @@ https://drive.google.com/file/d/1r8LMT41pRHPPxybeuBLHDNtvokcxeEOz/view?usp=shari
 https://drive.google.com/file/d/1PsFIl-EuADG1OtTtPpq5TQeVCs2g9Eqr/view?usp=drivesdk
 Apologies for no audio 😅, changelog below
 
+## Walkthrough Video (Day 5)
+https://drive.google.com/file/d/1eWAtCrgZl4Z4S60yvQyBVVEwrSy44pxA/view?usp=sharing
+
 ## 🌌 The Concept
 The **Word Worm** is an interactive, generative art experience featuring a biological-digital hybrid entity that roams a void filled with linguistic debris. As the user, you guide this creature to consume floating fragments of language. Each word consumed is stored in its "stomach" (a persistent database), slowly rebuilding the AI's internal vocabulary and influencing its emerging personality.
 
@@ -128,6 +131,9 @@ Functionality:
   * **Edible Dark Matter**: Ambient words orbiting black holes are now interactive and can be consumed to feed the worm.
 * **Dream System**:
   * Implemented a **Dream Journal** (Labyrinth) to track the entity's subconscious state and "echoed" thoughts.
+* **The UI Parasite (Meta-Biology)**:
+  * **Cursor Predation**: The worm can now break the fourth wall. If ignored or hungry, it will aggressively hunt your mouse cursor. If caught, you must shake your mouse to struggle free.
+  * **Digital Infection**: As the worm crawls over UI elements (titles, buttons, panels), it causes them to experience visual "glitches," chromatic aberration, and data corruption.
 
 Systems & Design:
 
