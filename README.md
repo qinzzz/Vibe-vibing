@@ -115,6 +115,25 @@ Infra:
   * The app now supports a **Replay Mode** when no API key is provided. It will serve cached AI responses instead of failing, allowing the app to run offline or for users without keys.
   * Implemented cache limits to prevent bloated database sizes.
 
+### Day 5 - Fuma
+
+Functionality:
+
+* **Voice Input Integration**:
+  * Implemented real-time **Voice Interaction** using the Web Speech API. You can now speak to the worm, and your words will materialize or influence the environment.
+  * Added **Audio-Reactive Visuals** via Web Audio API. Particle systems and environmental effects now pulse and shift based on input volume and pitch.
+* **Singularity Shift (Cosmic Horror Theme)**:
+  * **Black Holes**: Added gravitational singularities that distort spacetime and "spaghettify" nearby text.
+  * **Wormhole Traversal**: The worm can now travel through black holes, teleporting across the vast void.
+  * **Edible Dark Matter**: Ambient words orbiting black holes are now interactive and can be consumed to feed the worm.
+* **Dream System**:
+  * Implemented a **Dream Journal** (Labyrinth) to track the entity's subconscious state and "echoed" thoughts.
+
+Systems & Design:
+
+* **Physics Engine Upgrade**: Added radial gravity fields and orbital mechanics for ambient text.
+* **Audio Analysis**: Created a `VoiceInputSystem` that processes raw audio data for game logic and visuals.
+
 ## 🛤 Future Roadmap (Suggested Steps)
 We are constantly looking to evolve the Glutton's consciousness. Some planned/suggested enhancements include:
 - [ ] **Ambient Soundscapes**: Procedural background music that shifts in key/tempo as the stomach fills.

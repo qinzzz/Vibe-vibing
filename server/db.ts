@@ -129,8 +129,18 @@ export const deleteWorm = (wormId: string) => {
 
 // Word Management (updated to include worm_id)
 export const saveWord = (id: string, wormId: string, text: string) => {
-  const stmt = db.prepare('INSERT INTO stomach (id, worm_id, text) VALUES (?, ?, ?)');
+  const stmt = db.prepare('INSERT OR REPLACE INTO stomach (id, worm_id, text) VALUES (?, ?, ?)');
   stmt.run(id, wormId, text);
+};
+
+export const saveWordsBatch = (wormId: string, words: { id: string, text: string }[]) => {
+  const stmt = db.prepare('INSERT OR REPLACE INTO stomach (id, worm_id, text) VALUES (?, ?, ?)');
+  const transaction = db.transaction((wordsToSave: { id: string, text: string }[]) => {
+    for (const word of wordsToSave) {
+      stmt.run(word.id || Math.random().toString(), wormId, word.text);
+    }
+  });
+  transaction(words);
 };
 
 export const getStomachContent = () => {

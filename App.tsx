@@ -7,11 +7,13 @@ import { ControlGroup } from './components/ui/ControlGroup';
 import { Engine } from './core/Engine';
 import { EVENTS } from './core/events';
 import type { Worm } from './types';
+import { LabyrinthJournal } from './components/LabyrinthJournal';
 
 const NEWS_PREFETCH_LIMIT = 25;
 const NEWS_PREFETCH_MS = 2 * 60 * 60 * 1000;
 
 const App: React.FC = () => {
+  const [engine, setEngine] = useState<Engine | null>(null);
   const [params, setParams] = useState({
     l1: 58.00,
     l2: 35.00,
@@ -51,6 +53,7 @@ const App: React.FC = () => {
   const [worms, setWorms] = useState<Worm[]>([]);
   const [activeWormId, setActiveWormId] = useState<string>('worm-0');
   const [isReproducing, setIsReproducing] = useState(false);
+  const [isMicActive, setIsMicActive] = useState(false);
   const engineRef = useRef<Engine | null>(null);
   const newsHeadlinePoolRef = useRef<string[]>([]);
 
@@ -78,18 +81,19 @@ const App: React.FC = () => {
     }
   }, []);
 
-  const handleEngineInit = useCallback((engine: Engine) => {
-    engineRef.current = engine;
-    engine.events.emit(EVENTS.NEWS_STORM_DEBUG_UPDATED, weatherDebug);
-    engine.events.emit(EVENTS.NEWS_STORM_MODE_UPDATED, { enabled: isStormMode });
-    engine.events.emit(EVENTS.NEWS_STORM_WEATHER_UPDATED, stormWeather);
+  const handleEngineInit = useCallback((engineInstance: Engine) => {
+    engineRef.current = engineInstance;
+    setEngine(engineInstance);
+    engineInstance.events.emit(EVENTS.NEWS_STORM_DEBUG_UPDATED, weatherDebug);
+    engineInstance.events.emit(EVENTS.NEWS_STORM_MODE_UPDATED, { enabled: isStormMode });
+    engineInstance.events.emit(EVENTS.NEWS_STORM_WEATHER_UPDATED, stormWeather);
 
     // Listen for worm lifecycle events
-    engine.events.on(EVENTS.WORM_BORN, updateWormList);
-    engine.events.on(EVENTS.WORM_DIED, updateWormList);
+    engineInstance.events.on(EVENTS.WORM_BORN, updateWormList);
+    engineInstance.events.on(EVENTS.WORM_DIED, updateWormList);
 
     // Listen for hydration complete to sync UI with restored worms
-    engine.events.on(EVENTS.WORMS_HYDRATED, () => {
+    engineInstance.events.on(EVENTS.WORMS_HYDRATED, () => {
       updateWormList();
       // Update swallowed words for active worm after hydration
       if (engineRef.current) {
@@ -99,8 +103,8 @@ const App: React.FC = () => {
     });
 
     // Listen for reproduction events to freeze UI
-    engine.events.on(EVENTS.REPRODUCTION_START, () => setIsReproducing(true));
-    engine.events.on(EVENTS.REPRODUCTION_COMPLETE, () => {
+    engineInstance.events.on(EVENTS.REPRODUCTION_START, () => setIsReproducing(true));
+    engineInstance.events.on(EVENTS.REPRODUCTION_COMPLETE, () => {
       setIsReproducing(false);
       updateWormList(); // Update worm list to show new names
 
@@ -173,12 +177,23 @@ const App: React.FC = () => {
   };
 
   const handleClearAll = async () => {
-    if (!window.confirm("Purge all memories?")) return;
+    if (!window.confirm("Purge memory for this worm?")) return;
+
+    // Pause engine to prevent background saves (race condition)
+    if (engineRef.current) engineRef.current.stop();
+
     try {
-      await fetch('/api/stomach', { method: 'DELETE' });
+      await fetch(`/api/worms/${activeWormId}/words`, { method: 'DELETE' });
       setSwallowedWords([]);
+      // Notify Engine to clear only the active worm's state
+      if (engineRef.current) {
+        engineRef.current.events.emit(EVENTS.STOMACH_CLEAR, {});
+      }
     } catch (e) {
       console.error("Clear failed", e);
+    } finally {
+      // Resume engine
+      if (engineRef.current) engineRef.current.start();
     }
   };
 
@@ -197,6 +212,21 @@ const App: React.FC = () => {
   };
 
   const [hoveredWormId, setHoveredWormId] = useState<string | null>(null);
+  const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleMouseEnterWorm = (id: string) => {
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current);
+      hoverTimeoutRef.current = null;
+    }
+    setHoveredWormId(id);
+  };
+
+  const handleMouseLeaveWorm = () => {
+    hoverTimeoutRef.current = setTimeout(() => {
+      setHoveredWormId(null);
+    }, 300); // 300ms grace period to prevent jitter
+  };
 
   const handleMoodInfluence = (mood: string, targetId?: string) => {
     if (!engineRef.current) return;
@@ -250,6 +280,30 @@ const App: React.FC = () => {
         </p>
       </div>
 
+      {/* Microphone Toggle */}
+      <div className="absolute top-6 right-6 z-50 pointer-events-auto">
+        <button
+          onClick={() => {
+            const newState = !isMicActive;
+            setIsMicActive(newState);
+            if (engineRef.current) {
+              engineRef.current.events.emit('TOGGLE_VOICE_INPUT', newState);
+            }
+          }}
+          className={`p-3 rounded-full transition-all duration-300 border ${isMicActive
+              ? 'bg-red-500/20 border-red-500 text-red-400 animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.4)]'
+              : 'bg-white/5 border-white/10 text-white/40 hover:bg-white/10 hover:text-white'
+            }`}
+          title={isMicActive ? "Voice Input Active (Listening...)" : "Enable Voice Input"}
+        >
+          {isMicActive ? (
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>
+          ) : (
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="1" y1="1" x2="23" y2="23"></line><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"></path><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>
+          )}
+        </button>
+      </div>
+
       <BlobCanvas
         settings={params}
         onWordSwallowed={handleWordSwallowed}
@@ -267,153 +321,155 @@ const App: React.FC = () => {
             <div
               key={worm.id}
               className="relative group"
-              onMouseEnter={() => setHoveredWormId(worm.id)}
-              onMouseLeave={() => setHoveredWormId(null)}
+              onMouseEnter={() => handleMouseEnterWorm(worm.id)}
+              onMouseLeave={handleMouseLeaveWorm}
             >
               {/* Popover Menu */}
-              {(isHovered || (isActive && hoveredWormId === worm.id)) && (
-                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-3 w-[220px] bg-black/90 backdrop-blur-xl border border-white/20 rounded-xl p-3 shadow-2xl z-50 flex flex-col gap-4 animate-in fade-in slide-in-from-bottom-2 duration-200">
+              {(isHovered) && (
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 w-[220px] pb-3 z-50">
+                  <div className="bg-black/90 backdrop-blur-xl border border-white/20 rounded-xl p-3 shadow-2xl flex flex-col gap-4 animate-in fade-in slide-in-from-bottom-2 duration-200 pointer-events-auto">
 
-                  {/* Mood Section */}
-                  <div>
-                    <div className="text-[10px] text-white/40 uppercase tracking-wider mb-2 font-bold">Mood</div>
-                    <div className="grid grid-cols-2 gap-1.5">
-                      {['Serene', 'Watchful', 'Playful', 'Wistful', 'Irritable', 'Electric'].map(m => (
-                        <button
-                          key={m}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleMoodInfluence(m, worm.id);
-                          }}
-                          className="px-2 py-1.5 bg-white/5 border border-white/10 rounded text-[10px] text-white/70 hover:bg-white/20 hover:text-blue-300 transition-colors text-center"
-                        >
-                          {m}
-                        </button>
-                      ))}
+                    {/* Mood Section */}
+                    <div>
+                      <div className="text-[10px] text-white/40 uppercase tracking-wider mb-2 font-bold">Mood</div>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        {['Serene', 'Watchful', 'Playful', 'Wistful', 'Irritable', 'Electric'].map(m => (
+                          <button
+                            key={m}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleMoodInfluence(m, worm.id);
+                            }}
+                            className="px-2 py-1.5 bg-white/5 border border-white/10 rounded text-[10px] text-white/70 hover:bg-white/20 hover:text-blue-300 transition-colors text-center"
+                          >
+                            {m}
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                  </div>
 
-                  {/* Soul Section */}
-                  <div>
-                    <div className="text-[10px] text-white/40 uppercase tracking-wider mb-2 font-bold flex justify-between">
-                      <span>Soul</span>
-                      <span className="text-[9px] opacity-50">(Personality)</span>
-                    </div>
-                    <div className="space-y-1.5 max-h-[120px] overflow-y-auto custom-scrollbar pr-1">
-                      {Object.entries(worm.soul?.axes || {}).map(([key, value]) => (
-                        <div key={key} className="flex items-center justify-between text-[9px] text-white/60">
-                          <span className="capitalize w-16">{key}</span>
-                          <div className="flex-1 h-1.5 bg-white/10 rounded-full mx-2 relative">
-                            {/* Center line */}
-                            <div className="absolute left-1/2 top-0 bottom-0 w-[1px] bg-white/20"></div>
-                            {/* Bar */}
-                            <div
-                              className={`h-full rounded-full transition-all duration-300 ${Number(value) > 0 ? 'bg-blue-400' : 'bg-amber-400'}`}
-                              style={{
-                                width: `${Math.min(50, Math.abs(Number(value)) * 50)}%`,
-                                left: Number(value) > 0 ? '50%' : undefined,
-                                right: Number(value) <= 0 ? '50%' : undefined
-                              }}
-                            />
+                    {/* Soul Section */}
+                    <div>
+                      <div className="text-[10px] text-white/40 uppercase tracking-wider mb-2 font-bold flex justify-between">
+                        <span>Soul</span>
+                        <span className="text-[9px] opacity-50">(Personality)</span>
+                      </div>
+                      <div className="space-y-1.5 max-h-[120px] overflow-y-auto custom-scrollbar pr-1">
+                        {Object.entries(worm.soul?.axes || {}).map(([key, value]) => (
+                          <div key={key} className="flex items-center justify-between text-[9px] text-white/60">
+                            <span className="capitalize w-16">{key}</span>
+                            <div className="flex-1 h-1.5 bg-white/10 rounded-full mx-2 relative">
+                              {/* Center line */}
+                              <div className="absolute left-1/2 top-0 bottom-0 w-[1px] bg-white/20"></div>
+                              {/* Bar */}
+                              <div
+                                className={`h-full rounded-full transition-all duration-300 ${Number(value) > 0 ? 'bg-blue-400' : 'bg-amber-400'}`}
+                                style={{
+                                  width: `${Math.min(50, Math.abs(Number(value)) * 50)}%`,
+                                  left: Number(value) > 0 ? '50%' : undefined,
+                                  right: Number(value) <= 0 ? '50%' : undefined
+                                }}
+                              />
+                            </div>
+                            <span className="w-6 text-right font-mono">{(Number(value)).toFixed(1)}</span>
                           </div>
-                          <span className="w-6 text-right font-mono">{(Number(value)).toFixed(1)}</span>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Shape Section (Global) */}
+                    <div>
+                      <div className="text-[10px] text-white/40 uppercase tracking-wider mb-2 font-bold flex justify-between">
+                        <span>Shape</span>
+                        <span className="text-[9px] opacity-50">(Global)</span>
+                      </div>
+                      <div className="space-y-3">
+                        <div>
+                          <label className="text-[9px] text-white/60 block mb-1">Core Size</label>
+                          <input
+                            type="range"
+                            min="50" max="300" step="5"
+                            value={params.coreRadius}
+                            onChange={(e) => setParams(p => ({ ...p, coreRadius: Number(e.target.value) }))}
+                            className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer hover:bg-white/20"
+                          />
                         </div>
-                      ))}
+                        <div>
+                          <label className="text-[9px] text-white/60 block mb-1">Hip Size</label>
+                          <input
+                            type="range"
+                            min="30" max="150" step="5"
+                            value={params.hipRadius}
+                            onChange={(e) => setParams(p => ({ ...p, hipRadius: Number(e.target.value) }))}
+                            className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer hover:bg-white/20"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[9px] text-white/60 block mb-1">Foot Size</label>
+                          <input
+                            type="range"
+                            min="10" max="150" step="2"
+                            value={params.footRadius}
+                            onChange={(e) => setParams(p => ({ ...p, footRadius: Number(e.target.value) }))}
+                            className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer hover:bg-white/20"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[9px] text-white/60 block mb-1">Thickness</label>
+                          <input
+                            type="range"
+                            min="0.05" max="0.9" step="0.01"
+                            value={params.isoThreshold}
+                            onChange={(e) => setParams(p => ({ ...p, isoThreshold: Number(e.target.value) }))}
+                            className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer hover:bg-white/20"
+                          />
+                        </div>
+                      </div>
                     </div>
-                  </div>
 
-                  {/* Shape Section (Global) */}
-                  <div>
-                    <div className="text-[10px] text-white/40 uppercase tracking-wider mb-2 font-bold flex justify-between">
-                      <span>Shape</span>
-                      <span className="text-[9px] opacity-50">(Global)</span>
-                    </div>
-                    <div className="space-y-3">
-                      <div>
-                        <label className="text-[9px] text-white/60 block mb-1">Core Size</label>
-                        <input
-                          type="range"
-                          min="50" max="300" step="5"
-                          value={params.coreRadius}
-                          onChange={(e) => setParams(p => ({ ...p, coreRadius: Number(e.target.value) }))}
-                          className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer hover:bg-white/20"
-                        />
+                    {/* Physics Section (Global) */}
+                    <div>
+                      <div className="text-[10px] text-white/40 uppercase tracking-wider mb-2 font-bold flex justify-between">
+                        <span>Physics</span>
+                        <span className="text-[9px] opacity-50">(Global)</span>
                       </div>
-                      <div>
-                        <label className="text-[9px] text-white/60 block mb-1">Hip Size</label>
-                        <input
-                          type="range"
-                          min="30" max="150" step="5"
-                          value={params.hipRadius}
-                          onChange={(e) => setParams(p => ({ ...p, hipRadius: Number(e.target.value) }))}
-                          className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer hover:bg-white/20"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[9px] text-white/60 block mb-1">Foot Size</label>
-                        <input
-                          type="range"
-                          min="10" max="150" step="2"
-                          value={params.footRadius}
-                          onChange={(e) => setParams(p => ({ ...p, footRadius: Number(e.target.value) }))}
-                          className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer hover:bg-white/20"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[9px] text-white/60 block mb-1">Thickness</label>
-                        <input
-                          type="range"
-                          min="0.05" max="0.9" step="0.01"
-                          value={params.isoThreshold}
-                          onChange={(e) => setParams(p => ({ ...p, isoThreshold: Number(e.target.value) }))}
-                          className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer hover:bg-white/20"
-                        />
+                      <div className="space-y-3">
+                        <div>
+                          <label className="text-[9px] text-white/60 block mb-1">Speed</label>
+                          <input
+                            type="range"
+                            min="1" max="100" step="1"
+                            value={Math.round(params.coreLerp * 1000)}
+                            onChange={(e) => setParams(p => ({ ...p, coreLerp: Number(e.target.value) / 1000 }))}
+                            className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer hover:bg-white/20"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[9px] text-white/60 block mb-1">Foot Grip</label>
+                          <input
+                            type="range"
+                            min="0.05" max="2.0" step="0.05"
+                            value={params.footWeight}
+                            onChange={(e) => setParams(p => ({ ...p, footWeight: Number(e.target.value) }))}
+                            className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer hover:bg-white/20"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[9px] text-white/60 block mb-1">Res (Cell Size)</label>
+                          <input
+                            type="range"
+                            min="4" max="30" step="1"
+                            value={params.cellSize}
+                            onChange={(e) => setParams(p => ({ ...p, cellSize: Number(e.target.value) }))}
+                            className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer hover:bg-white/20"
+                          />
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  {/* Physics Section (Global) */}
-                  <div>
-                    <div className="text-[10px] text-white/40 uppercase tracking-wider mb-2 font-bold flex justify-between">
-                      <span>Physics</span>
-                      <span className="text-[9px] opacity-50">(Global)</span>
-                    </div>
-                    <div className="space-y-3">
-                      <div>
-                        <label className="text-[9px] text-white/60 block mb-1">Speed</label>
-                        <input
-                          type="range"
-                          min="1" max="100" step="1"
-                          value={Math.round(params.coreLerp * 1000)}
-                          onChange={(e) => setParams(p => ({ ...p, coreLerp: Number(e.target.value) / 1000 }))}
-                          className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer hover:bg-white/20"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[9px] text-white/60 block mb-1">Foot Grip</label>
-                        <input
-                          type="range"
-                          min="0.05" max="2.0" step="0.05"
-                          value={params.footWeight}
-                          onChange={(e) => setParams(p => ({ ...p, footWeight: Number(e.target.value) }))}
-                          className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer hover:bg-white/20"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[9px] text-white/60 block mb-1">Res (Cell Size)</label>
-                        <input
-                          type="range"
-                          min="4" max="30" step="1"
-                          value={params.cellSize}
-                          onChange={(e) => setParams(p => ({ ...p, cellSize: Number(e.target.value) }))}
-                          className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer hover:bg-white/20"
-                        />
-                      </div>
-                    </div>
+                    {/* Arrow */}
+                    <div className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-black/90 border-r border-b border-white/20 rotate-45 transform"></div>
                   </div>
-
-                  {/* Arrow */}
-                  <div className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-black/90 border-r border-b border-white/20 rotate-45 transform"></div>
                 </div>
               )}
 
@@ -624,6 +680,7 @@ const App: React.FC = () => {
       </div>
 
       {/* Reproduction Freeze Overlay */}
+      <LabyrinthJournal engine={engine} />
       {
         isReproducing && (
           <div className="absolute inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center pointer-events-auto">

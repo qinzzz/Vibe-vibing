@@ -84,6 +84,7 @@ export class WormLifecycleSystem implements System {
                 parentId: worm.parentId,
                 hue: worm.hue,
                 sizeMultiplier: worm.sizeMultiplier,
+                thickness: worm.thickness,
                 speedMultiplier: worm.speedMultiplier,
                 birthTime: worm.birthTime,
                 satiation: worm.satiation,

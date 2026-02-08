@@ -23,3 +23,8 @@
   background: rgba(59, 130, 246, 0.5);
   @apply rounded-xl;
 }
+
+.mask-fade-out {
+  mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 80%, rgba(0,0,0,0) 100%);
+  -webkit-mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 80%, rgba(0,0,0,0) 100%);
+}
