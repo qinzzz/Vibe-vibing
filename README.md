@@ -152,3 +152,20 @@ Feel free to refactor the physics, adjust the AI prompts, or polish the UI. This
 
 ---
 *Created as an exploration of generative personality and digital-organic synergy.*
+
+### Day 6 - Kelly
+
+Functionality:
+
+* **Ambient Immersion & Audio Controls**:
+  * Added ambient background music that auto-plays on page load, transforming the experience from silent to atmospheric.
+  * Implemented a volume slider inside Glutton Config for real-time control.
+* **Bioluminescent Heartbeat System:**:
+  * Introduced a dynamic inner glow inside the creature that scales with words consumed.
+  * Added a pulsing effect where the glow expands and brightens as the worm feeds, reinforcing a sense of biological life.
+* **Natural Language Dialogue System**:
+  * Built a structured sentence generator that transforms swallowed words into readable, human-like dialogue.
+  * Implemented verb detection, filler logic, and a coherence filter to prevent nonsensical output.
+* **Adaptive Sentence Variety**:
+  * Added multiple sentence templates to avoid repetitive phrasing
+  * Dialogue now appears only after passing readability checks and generates more introspective, self-aware thoughts (e.g., “I wonder…”, “I contemplate…”).
