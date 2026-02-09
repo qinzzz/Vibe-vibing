@@ -603,21 +603,97 @@ useEffect(() => {
         onWordSwallowed={handleWordSwallowed}
         onEngineInit={handleEngineInit}
       />
-      {showDialogue && wormSentence && (
+{showDialogue && wormSentence && (
   <div
-    className="absolute z-40 max-w-[360px] px-4 py-3 rounded-xl bg-black/80 border border-white/15 backdrop-blur-md text-white/80 text-sm leading-relaxed shadow-2xl"
+    className="absolute z-40 pointer-events-none"
     style={{
       left: speechPos.x,
       top: speechPos.y,
       transform: "translate(-50%, -50%)",
-      pointerEvents: "none",
     }}
   >
-    <div className="text-[10px] uppercase tracking-widest text-white/40 mb-1">
-      Worm thinks
+    <div
+      className="
+        relative max-w-[380px] px-5 py-4 rounded-2xl
+        text-white/90 text-sm leading-relaxed
+        border border-white/15
+        shadow-[0_20px_60px_rgba(0,0,0,0.6)]
+        backdrop-blur-xl
+        overflow-hidden
+      "
+      style={{
+        background:
+          "radial-gradient(circle at 20% 30%, rgba(120,80,255,0.35) 0%, rgba(0,0,0,0) 55%)," +
+          "radial-gradient(circle at 80% 25%, rgba(0,200,255,0.22) 0%, rgba(0,0,0,0) 55%)," +
+          "radial-gradient(circle at 60% 80%, rgba(255,80,180,0.18) 0%, rgba(0,0,0,0) 60%)," +
+          "rgba(8,10,18,0.70)",
+      }}
+    >
+      {/* shimmer sweep */}
+      <div
+        className="absolute inset-0 opacity-50"
+        style={{
+          background:
+            "linear-gradient(120deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.10) 35%, rgba(255,255,255,0) 70%)",
+          transform: "translateX(-60%)",
+          animation: "wormShimmer 3.8s ease-in-out infinite",
+          mixBlendMode: "screen",
+        }}
+      />
+
+      {/* inner glow rim */}
+      <div
+        className="absolute inset-0 rounded-2xl"
+        style={{
+          boxShadow:
+            "inset 0 0 0 1px rgba(255,255,255,0.06), inset 0 0 28px rgba(120,80,255,0.18)",
+        }}
+      />
+
+      <div className="relative">
+        <div className="flex items-center gap-2 mb-2">
+          <div
+            className="w-2 h-2 rounded-full"
+            style={{
+              background:
+                "radial-gradient(circle, rgba(255,255,255,0.9) 0%, rgba(120,80,255,0.8) 40%, rgba(0,0,0,0) 70%)",
+              boxShadow: "0 0 14px rgba(120,80,255,0.55)",
+              animation: "wormDot 1.6s ease-in-out infinite",
+            }}
+          />
+          <div className="text-[10px] uppercase tracking-[0.25em] text-white/55">
+            Worm thinks
+          </div>
+        </div>
+
+        <div className="text-white/90">
+          {wormSentence}
+        </div>
+      </div>
+
+      {/* tail */}
+      <div
+        className="absolute left-1/2 -bottom-2 w-4 h-4 rotate-45 -translate-x-1/2 border border-white/15"
+        style={{
+          background:
+            "linear-gradient(135deg, rgba(120,80,255,0.20) 0%, rgba(0,200,255,0.10) 45%, rgba(8,10,18,0.75) 100%)",
+          boxShadow: "0 10px 24px rgba(0,0,0,0.45)",
+        }}
+      />
+
+      {/* local keyframes so you don't need to touch css files */}
+      <style>{`
+        @keyframes wormShimmer {
+          0%   { transform: translateX(-70%); opacity: 0.25; }
+          50%  { transform: translateX(10%);  opacity: 0.65; }
+          100% { transform: translateX(90%);  opacity: 0.25; }
+        }
+        @keyframes wormDot {
+          0%, 100% { transform: scale(0.95); opacity: 0.7; }
+          50%      { transform: scale(1.25); opacity: 1; }
+        }
+      `}</style>
     </div>
-    {wormSentence}
-    <div className="absolute left-1/2 -bottom-2 w-3 h-3 bg-black/80 border-r border-b border-white/15 rotate-45 -translate-x-1/2" />
   </div>
 )}
 
