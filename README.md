@@ -14,6 +14,9 @@ Apologies for no audio 😅, changelog below
 ## Walkthrough Video (Day 5)
 https://drive.google.com/file/d/1eWAtCrgZl4Z4S60yvQyBVVEwrSy44pxA/view?usp=sharing
 
+## Walkthrough Video (Day 6)
+https://drive.google.com/file/d/1r1NPxxOUkR8j9D8kyr9gX8ONOdCXOt4L/view?usp=drive_link
+
 ## 🌌 The Concept
 The **Word Worm** is an interactive, generative art experience featuring a biological-digital hybrid entity that roams a void filled with linguistic debris. As the user, you guide this creature to consume floating fragments of language. Each word consumed is stored in its "stomach" (a persistent database), slowly rebuilding the AI's internal vocabulary and influencing its emerging personality.
 
