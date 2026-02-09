@@ -13,6 +13,150 @@ const NEWS_PREFETCH_LIMIT = 25;
 const NEWS_PREFETCH_MS = 2 * 60 * 60 * 1000;
 
 const App: React.FC = () => {
+  const VERB_HINTS = new Set([
+  "am","is","are","was","were","be","been","being",
+  "have","has","had","do","does","did",
+  "feel","think","want","need","know","see","hear","remember","forget",
+  "make","makes","made","become","becomes","became",
+  "go","goes","went","come","comes","came","move","moves","moved",
+  "eat","eats","ate","swallow","swallows","swallowed"
+]);
+
+function cleanToken(t: string) {
+  return t
+    .trim()
+    .replace(/[^\w'’-]+/g, "")     // keep letters/numbers/_ and apostrophes
+    .replace(/_/g, "")
+    .toLowerCase();
+}
+
+function hasVerb(tokens: string[]) {
+  return tokens.some(t => VERB_HINTS.has(t));
+}
+
+function looksHumanReadable(sentence: string) {
+  const rawTokens = sentence.split(/\s+/).filter(Boolean);
+  if (rawTokens.length < 6) return false;           // too short = likely nonsense
+  if (rawTokens.length > 26) return false;          // too long for a bubble
+
+  // Must contain mostly normal word tokens (avoid “%%%%” / random junk)
+  const clean = rawTokens.map(cleanToken).filter(Boolean);
+  const alphaLike = clean.filter(t => /[a-z]/i.test(t));
+  if (alphaLike.length / Math.max(1, clean.length) < 0.75) return false;
+
+  // Avoid spammy repetition like “the the the the”
+  const freq: Record<string, number> = {};
+  for (const t of clean) {
+    freq[t] = (freq[t] || 0) + 1;
+    if (freq[t] >= 4) return false;
+  }
+
+  // Must “feel like a sentence”: has a verb hint + ends with punctuation
+  if (!hasVerb(clean)) return false;
+  if (!/[.!?]$/.test(sentence.trim())) return false;
+
+  return true;
+}
+
+function buildSentenceWithFillers(eatenWords: string[]) {
+  const tokens = eatenWords
+    .map(w => (w || "").trim())
+    .filter(Boolean)
+    .map(w => w.replace(/\s+/g, " "));
+
+  if (tokens.length === 0) return null;
+
+  // Keep short
+  const core = tokens.slice(-4);
+
+  const pick = <T,>(arr: T[]) => arr[Math.floor(Math.random() * arr.length)];
+  const startsOk = (t: string) =>
+    ["i","we","you","he","she","they","it","the","a","an","this","that"].includes(cleanToken(t));
+
+  const subjectPool = ["I", "I", "I", "I", "This", "The worm"]; 
+  // slight bias toward "I" for consciousness
+  const subject = startsOk(core[0] || "") ? core[0] : pick(subjectPool);
+
+  // 🧠 Self-aware verbs
+  const introspectiveVerbs = [
+    "wonder",
+    "contemplate",
+    "question",
+    "remember",
+    "notice",
+    "realize",
+    "sense",
+    "consider",
+    "imagine",
+    "observe",
+    "feel"
+  ];
+
+  const reflectiveTails = [
+    ["about", "what", "I", "am"],
+    ["what", "this", "means"],
+    ["why", "it", "exists"],
+    ["if", "I", "am", "becoming"],
+    ["whether", "it", "changes", "me"],
+    ["what", "remains"],
+    ["if", "I", "am", "more", "than", "this"]
+  ];
+
+  const atmosphericOpeners = [
+    ["In", "the", "dark,"],
+    ["For", "a", "moment,"],
+    ["Between", "thoughts,"],
+    ["Inside", "the", "silence,"]
+  ];
+
+  const body = startsOk(core[0] || "") ? core.slice(1) : core;
+
+  const t = Math.random();
+  let sentenceTokens: string[] = [];
+
+  // Template A: direct introspection
+  if (t < 0.4) {
+    sentenceTokens = [
+      subject,
+      pick(introspectiveVerbs),
+      ...body
+    ];
+  }
+  // Template B: existential reflection
+  else if (t < 0.7) {
+    sentenceTokens = [
+      subject,
+      pick(introspectiveVerbs),
+      ...pick(reflectiveTails)
+    ];
+  }
+  // Template C: atmospheric + consciousness
+  else {
+    sentenceTokens = [
+      ...pick(atmosphericOpeners),
+      subject,
+      pick(introspectiveVerbs),
+      ...body
+    ];
+  }
+
+  // Keep short
+  const MAX_TOKENS = 12;
+  sentenceTokens = sentenceTokens.slice(0, MAX_TOKENS);
+
+  let sentence = sentenceTokens
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .replace(/\s+([.,!?])/g, "$1")
+    .trim();
+
+  sentence = sentence.charAt(0).toUpperCase() + sentence.slice(1);
+  if (!/[.!?]$/.test(sentence)) sentence += ".";
+
+  return sentence;
+}
+
+
   const [engine, setEngine] = useState<Engine | null>(null);
   const [params, setParams] = useState({
     l1: 58.00,
@@ -50,16 +194,23 @@ const App: React.FC = () => {
   const [isRightOpen, setIsRightOpen] = useState(false);
   const [isLeftOpen, setIsLeftOpen] = useState(false);
   const [swallowedWords, setSwallowedWords] = useState<{ id: string, text: string }[]>([]);
+  const [wormSentence, setWormSentence] = useState<string>("");
+  const [showDialogue, setShowDialogue] = useState(false);
   const [worms, setWorms] = useState<Worm[]>([]);
   const [activeWormId, setActiveWormId] = useState<string>('worm-0');
   const [isReproducing, setIsReproducing] = useState(false);
   const [isMicActive, setIsMicActive] = useState(false);
   const engineRef = useRef<Engine | null>(null);
+  const [speechPos, setSpeechPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const newsHeadlinePoolRef = useRef<string[]>([]);
 
-  const handleWordSwallowed = useCallback((data: { id: string, text: string }) => {
-    setSwallowedWords(prev => [data, ...prev]);
-  }, []);
+  const musicRef = useRef<HTMLAudioElement | null>(null);
+  const [musicVolume, setMusicVolume] = useState(0.3);
+  const [isMusicPlaying, setIsMusicPlaying] = useState(false);
+
+const handleWordSwallowed = useCallback((data: { id: string, text: string }) => {
+  setSwallowedWords(prev => [data, ...prev]);
+}, []);
 
   const prefetchNewsHeadlines = useCallback(async () => {
     try {
@@ -141,6 +292,144 @@ const App: React.FC = () => {
     if (!isStormMode) return;
     prefetchNewsHeadlines();
   }, [isStormMode, prefetchNewsHeadlines]);
+
+useEffect(() => {
+  const HIDE_AFTER_MS = 5000;            // how long bubble stays visible
+  const MIN_NEW_WORDS_FOR_NEW_SENTENCE = 3; // must eat this many more words to show again
+
+  const eaten = swallowedWords
+    .slice(0, 8) // newest -> older
+    .map(w => (w.text || "").trim())
+    .filter(Boolean);
+
+  if (eaten.length === 0) {
+    setWormSentence("");
+    setShowDialogue(false);
+    lastSentenceRef.current = "";
+    lastShownWordCountRef.current = 0;
+    if (dialogueTimerRef.current) window.clearTimeout(dialogueTimerRef.current);
+    dialogueTimerRef.current = null;
+    return;
+  }
+
+  // chronological (oldest -> newest)
+  const chronological = eaten.slice().reverse();
+
+  const candidate = buildSentenceWithFillers(chronological);
+  if (!candidate) {
+    setWormSentence("");
+    setShowDialogue(false);
+    return;
+  }
+
+  // Must pass your natural language checkpoint
+  if (!looksHumanReadable(candidate)) {
+    // don’t show bubble
+    setWormSentence("");
+    setShowDialogue(false);
+    return;
+  }
+
+  // Only show if:
+  // (1) candidate is new, and
+  // (2) enough new words since last show
+  const sentenceChanged = candidate !== lastSentenceRef.current;
+  const newWordsSinceLastShow = swallowedWords.length - lastShownWordCountRef.current;
+
+  if (!sentenceChanged) return;
+  if (newWordsSinceLastShow < MIN_NEW_WORDS_FOR_NEW_SENTENCE) return;
+
+  // Show bubble
+  setWormSentence(candidate);
+  setShowDialogue(true);
+
+  lastSentenceRef.current = candidate;
+  lastShownWordCountRef.current = swallowedWords.length;
+
+  // restart hide timer
+  if (dialogueTimerRef.current) window.clearTimeout(dialogueTimerRef.current);
+  dialogueTimerRef.current = window.setTimeout(() => {
+    setShowDialogue(false);
+  }, HIDE_AFTER_MS);
+}, [swallowedWords]);
+
+useEffect(() => {
+  return () => {
+    if (dialogueTimerRef.current) window.clearTimeout(dialogueTimerRef.current);
+  };
+}, []);
+
+  useEffect(() => {
+  const audio = musicRef.current;
+  if (!audio) return;
+
+  audio.loop = true;
+  audio.volume = musicVolume;
+
+  const start = async () => {
+    try {
+      await audio.play();
+      window.removeEventListener("pointerdown", start);
+      window.removeEventListener("keydown", start);
+    } catch (e) {
+      // still blocked; keep waiting for interaction
+      console.log("Autoplay blocked until user interaction.");
+    }
+  };
+  
+  const toggleMusic = async () => {
+  const audio = musicRef.current;
+  if (!audio) return;
+
+  if (isMusicPlaying) {
+    audio.pause();
+    setIsMusicPlaying(false);
+  } else {
+    try {
+      await audio.play();
+      setIsMusicPlaying(true);
+    } catch (e) {
+      console.log("Playback blocked.");
+    }
+  }
+};
+
+  // 1) try immediately on load
+  start();
+
+  // 2) if blocked, unlock on first interaction (click/tap/keypress)
+  window.addEventListener("pointerdown", start, { once: true });
+  window.addEventListener("keydown", start, { once: true });
+
+  return () => {
+    window.removeEventListener("pointerdown", start);
+    window.removeEventListener("keydown", start);
+  };
+}, []);
+    
+useEffect(() => {
+  let raf = 0;
+
+  const tick = () => {
+    if (engineRef.current) {
+      const core = engineRef.current.activeWorm.corePos;
+      const screen = engineRef.current.worldToScreen(core);
+
+      // Dialogue bubble slightly above the worm
+      setSpeechPos({ x: screen.x, y: screen.y - 140 });
+    }
+    raf = requestAnimationFrame(tick);
+  };
+
+  tick();
+  return () => cancelAnimationFrame(raf);
+}, []);
+
+useEffect(() => {
+  if (musicRef.current) {
+    musicRef.current.volume = musicVolume;
+  }
+}, [musicVolume]);
 
   const updateWormList = () => {
     if (!engineRef.current) return;
@@ -268,9 +557,13 @@ const App: React.FC = () => {
 
     engineRef.current.events.emit(EVENTS.FORCE_MOOD, { wormId: idToInfluence, axes });
   };
+  const dialogueTimerRef = useRef<number | null>(null);
+  const lastSentenceRef = useRef<string>("");
+  const lastShownWordCountRef = useRef<number>(0);
 
   return (
     <div className="relative w-full h-screen bg-black overflow-hidden flex flex-col">
+  <audio ref={musicRef} src="/audio/ambient.mp3" preload="auto" />
       <div className="absolute top-6 left-1/2 -translate-x-1/2 z-10 pointer-events-none text-center">
         <h1 className="text-white text-2xl font-bold tracking-tight opacity-80 uppercase italic font-mono-custom" data-glitch-target="true">
           The Word Worm
@@ -310,6 +603,23 @@ const App: React.FC = () => {
         onWordSwallowed={handleWordSwallowed}
         onEngineInit={handleEngineInit}
       />
+      {showDialogue && wormSentence && (
+  <div
+    className="absolute z-40 max-w-[360px] px-4 py-3 rounded-xl bg-black/80 border border-white/15 backdrop-blur-md text-white/80 text-sm leading-relaxed shadow-2xl"
+    style={{
+      left: speechPos.x,
+      top: speechPos.y,
+      transform: "translate(-50%, -50%)",
+      pointerEvents: "none",
+    }}
+  >
+    <div className="text-[10px] uppercase tracking-widest text-white/40 mb-1">
+      Worm thinks
+    </div>
+    {wormSentence}
+    <div className="absolute left-1/2 -bottom-2 w-3 h-3 bg-black/80 border-r border-b border-white/15 rotate-45 -translate-x-1/2" />
+  </div>
+)}
 
       {/* Worm Selector UI - Bottom Center */}
 
@@ -589,7 +899,21 @@ const App: React.FC = () => {
             <span className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></span>
             GLUTTON CONFIG
           </h2>
-
+          <ControlGroup title="Ambient Music">
+          <Slider
+            label="Volume"
+            desc="Background ambience level."
+            value={musicVolume}
+            min={0}
+            max={1}
+            step={0.01}
+            onChange={(v: number) => setMusicVolume(v)}
+            
+          />
+          
+          
+        </ControlGroup>
+          
           <ControlGroup title="News Storm">
             <p className="text-white/50 text-[11px] leading-relaxed mb-3">
               Launch a deceleration-only headline vortex. Letters enter already in motion and settle into readable lanes as momentum fades.

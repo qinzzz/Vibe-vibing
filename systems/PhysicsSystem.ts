@@ -105,7 +105,7 @@ export class PhysicsSystem implements System {
 
         // Adjusted Lerp for smoothness
         const baseLerp = (s.coreLerp * speedMultiplier * closeBoost) + closeAssist;
-        const followLerp = this.clamp(baseLerp * (1 - smooth * 0.2), 0.002, 0.14);
+        const followLerp = this.clamp(baseLerp * (1 - smooth * 0.2), 0.002, 0.28);
 
         const desiredX = target.x + wobbleX;
         const desiredY = target.y + wobbleY;
@@ -309,6 +309,43 @@ export class PhysicsSystem implements System {
         const hipRadius = s.hipRadius * worm.sizeMultiplier;
         const kneeRadius = s.kneeRadius * worm.sizeMultiplier;
         const footRadius = s.footRadius * worm.sizeMultiplier;
+
+        // --- INNER GLOW (brighter + larger as it eats more words) ---
+        // How full the worm is (0..1). You can swap satiation for swallowedWords if you want.
+        const fullness = Math.min(1, (worm.satiation ?? 0) / 100);
+
+        // Heartbeat: frequency + amplitude scale with fullness
+        const t = performance.now() * 0.001;
+
+        // A "thump" waveform: (sin)^3 gives a punchy beat instead of smooth breathing
+        const thump = Math.pow(Math.max(0, Math.sin(t * (1.2 + fullness * 1.6))), 3);
+
+        // Pulse strength grows as it eats more
+        const pulse = 1 + thump * (0.03 + fullness * 0.12);
+
+        // Glow grows with fullness, and pulse modulates it
+        const glowRadius = coreRadius * (0.32 + fullness * 0.50) * pulse;
+
+        // Brightness grows too, but stays soft
+        const glowAlpha = 0.1 + fullness * 0.16;
+
+        const glow = ctx.createRadialGradient(
+        core.x, core.y, coreRadius * 0.15,
+        core.x, core.y, glowRadius
+        );
+
+        glow.addColorStop(0, `hsla(${renderHue}, ${renderSat}%, ${Math.min(95, renderLight + 25)}%, ${glowAlpha})`);
+        glow.addColorStop(1, `hsla(${renderHue}, ${renderSat}%, ${renderLight}%, 0)`);
+
+        // draw glow behind outline
+        ctx.save();
+        ctx.globalCompositeOperation = "screen"; // softer than "lighter"
+        ctx.fillStyle = glow;
+        ctx.beginPath();
+        ctx.arc(core.x, core.y, glowRadius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+        // --- END INNER GLOW ---
 
         // Draw Skeleton
         if (s.showSkeleton) {
