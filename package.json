@@ -8,7 +8,9 @@
     "dev:all": "concurrently \"npm run dev\" \"npm run server\"",
     "server": "cd server && npm run dev",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "deploy:build": "npm run build && cd server && npm install && npm run build",
+    "start": "cd server && npm run start"
   },
   "dependencies": {
     "@google/genai": "^1.39.0",

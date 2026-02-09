@@ -130,6 +130,7 @@ export interface SoulIdentity {
 
 export interface WormSoul {
     axes: SoulAxes;
+    targetAxes?: SoulAxes; // For smooth transitions
     identity: SoulIdentity;
     motto: string;
     absorbedCount: number;

@@ -5,8 +5,9 @@ import { EVENTS } from '../core/events';
 const LIFECYCLE_CONSTANTS = {
     SATIATION_DECAY_RATE: 0.05,      // Per second
     HEALTH_DECAY_RATE: 0.5,          // When starving (0.5/sec = ~3.3min to die)
-    REPRODUCTION_THRESHOLD: 80,       // Satiation level
-    MIN_VOCAB_TO_REPRODUCE: 8,       // Words needed (lowered for testing)
+    REPRODUCTION_THRESHOLD: 100,      // Satiation level
+    MIN_VOCAB_TO_REPRODUCE: 12,      // Words needed
+    HEALTH_REPRODUCTION_THRESHOLD: 95, // Health needed
     DEATH_THRESHOLD: 0,              // Health to die
     STARVATION_THRESHOLD: 20,        // Satiation when health decays
     SATIATION_PER_WORD: 8            // Gained per word eaten
@@ -56,10 +57,12 @@ export class WormLifecycleSystem implements System {
             }
 
             // Check for reproduction readiness
-            if (
+            const isReady =
                 worm.satiation >= LIFECYCLE_CONSTANTS.REPRODUCTION_THRESHOLD &&
-                worm.vocabulary.size >= LIFECYCLE_CONSTANTS.MIN_VOCAB_TO_REPRODUCE
-            ) {
+                worm.vocabulary.size >= LIFECYCLE_CONSTANTS.MIN_VOCAB_TO_REPRODUCE &&
+                worm.health >= LIFECYCLE_CONSTANTS.HEALTH_REPRODUCTION_THRESHOLD;
+
+            if (isReady) {
                 this.engine.events.emit(EVENTS.READY_TO_REPRODUCE, worm);
             }
         });
@@ -131,7 +134,8 @@ export class WormLifecycleSystem implements System {
 
             // Check if ready to reproduce
             const isReady = worm.satiation >= LIFECYCLE_CONSTANTS.REPRODUCTION_THRESHOLD &&
-                worm.vocabulary.size >= LIFECYCLE_CONSTANTS.MIN_VOCAB_TO_REPRODUCE;
+                worm.vocabulary.size >= LIFECYCLE_CONSTANTS.MIN_VOCAB_TO_REPRODUCE &&
+                worm.health >= LIFECYCLE_CONSTANTS.HEALTH_REPRODUCTION_THRESHOLD;
 
             // Draw ready indicator
             if (isReady && worm.id === this.engine.wormState.activeWormId) {

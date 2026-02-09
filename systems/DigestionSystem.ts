@@ -123,7 +123,14 @@ export class DigestionSystem implements System {
     };
 
     private handleReproduceTrigger = () => {
-        if (this.canReproduce) {
+        const worm = this.engine.activeWorm;
+        // Strict verify conditions before splitting
+        // Thresholds match WormLifecycleSystem
+        const isReady = worm.satiation >= 99 &&
+            worm.vocabulary.size >= 12 &&
+            worm.health >= 95;
+
+        if (isReady) {
             // Show confirmation prompt first
             this.speechBubble = {
                 text: "splitting...",
@@ -131,6 +138,13 @@ export class DigestionSystem implements System {
                 timer: 120
             };
             this.reproduceWorm();
+        } else {
+            console.warn(`[REPRODUCE] Not ready. Satiation: ${worm.satiation}, Vocab: ${worm.vocabulary.size}, Health: ${worm.health}`);
+            this.speechBubble = {
+                text: "not full yet...",
+                opacity: 0,
+                timer: 100
+            };
         }
     };
 
@@ -189,29 +203,28 @@ export class DigestionSystem implements System {
                     // Clear existing worms to sync with DB
                     this.engine.wormState.worms.clear();
 
-                    // Restore each worm from DB
-                    worms.forEach((dbWorm: any) => {
-                        const worm = this.engine.createWorm(
-                            dbWorm.id,
-                            dbWorm.parent_id,
-                            dbWorm.generation,
-                            { x: window.innerWidth / 2, y: window.innerHeight / 2 }
-                        );
+                    // Only restore the FIRST worm from DB (to start with 1 worm as requested)
+                    const dbWorm = worms[0];
+                    const worm = this.engine.createWorm(
+                        dbWorm.id,
+                        dbWorm.parent_id,
+                        dbWorm.generation,
+                        { x: window.innerWidth / 2, y: window.innerHeight / 2 }
+                    );
 
-                        // Restore worm properties
-                        worm.name = dbWorm.name;
-                        worm.hue = dbWorm.hue;
-                        worm.sizeMultiplier = dbWorm.size_multiplier;
-                        worm.thickness = dbWorm.thickness || 0.25;
-                        worm.speedMultiplier = dbWorm.speed_multiplier;
-                        worm.birthTime = dbWorm.birth_time;
-                        worm.satiation = dbWorm.satiation;
-                        worm.health = dbWorm.health;
-                        worm.lastMeal = dbWorm.last_meal;
-                        worm.vocabulary.clear();
-                        worm.swallowedWords = [];
-                        this.ensureSoulState(worm as any);
-                    });
+                    // Restore worm properties
+                    worm.name = dbWorm.name;
+                    worm.hue = dbWorm.hue;
+                    worm.sizeMultiplier = dbWorm.size_multiplier;
+                    worm.thickness = dbWorm.thickness || 0.25;
+                    worm.speedMultiplier = dbWorm.speed_multiplier;
+                    worm.birthTime = dbWorm.birth_time;
+                    worm.satiation = dbWorm.satiation;
+                    worm.health = dbWorm.health;
+                    worm.lastMeal = dbWorm.last_meal;
+                    worm.vocabulary.clear();
+                    worm.swallowedWords = [];
+                    this.ensureSoulState(worm as any);
 
                     // Sync nextWormId to prevent collisions
                     let maxId = 0;
@@ -224,9 +237,8 @@ export class DigestionSystem implements System {
                     });
                     this.engine.wormState.nextWormId = maxId + 1;
 
-                    // Update active worm ID to the first one in the list
-                    const firstWormId = worms[0].id;
-                    this.engine.wormState.activeWormId = firstWormId;
+                    // Update active worm ID
+                    this.engine.wormState.activeWormId = dbWorm.id;
                 } else {
                     // No saved worms, ensure we have at least the default worm-0
                     console.log('[HYDRATE] No saved worms in DB, using default worm-0');

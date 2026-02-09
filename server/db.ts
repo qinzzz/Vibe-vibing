@@ -2,7 +2,9 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 
-const dbPath = path.resolve(__dirname, 'glutton.db');
+const dbPath = process.env.PERSISTENT_DISK_PATH
+  ? path.join(process.env.PERSISTENT_DISK_PATH, 'glutton.db')
+  : path.resolve(__dirname, 'glutton.db');
 const snapshotPath = path.resolve(__dirname, 'glutton.snapshot.db');
 
 // Initialize DB from snapshot if needed

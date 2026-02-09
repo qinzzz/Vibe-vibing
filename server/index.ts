@@ -11,7 +11,7 @@ import path from 'path';
 dotenv.config({ path: path.resolve(__dirname, '../.env.local') });
 
 const app = express();
-const PORT = 3001;
+const PORT = process.env.PORT || 3001;
 
 app.use(cors());
 app.use(express.json());
@@ -1179,6 +1179,20 @@ setInterval(() => {
     void refreshNewsHeadlinesCache('timer');
 }, NEWS_REFRESH_MS);
 
+// Serve static files from the React app's dist folder
+const distPath = path.resolve(__dirname, '../../dist');
+app.use(express.static(distPath));
+
+// Handle client-side routing
+app.get('*', (req, res) => {
+    // If it's an API route that didn't match, or a static file, don't serve index.html
+    if (req.path.startsWith('/api')) {
+        return res.status(404).json({ error: 'API route not found' });
+    }
+    res.sendFile(path.join(distPath, 'index.html'));
+});
+
 app.listen(PORT, () => {
     console.log(`Worm Server running at http://localhost:${PORT}`);
+    console.log(`Serving frontend from: ${distPath}`);
 });
