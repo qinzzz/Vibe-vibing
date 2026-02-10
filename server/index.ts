@@ -9,10 +9,20 @@ import path from 'path';
 import fs from 'fs';
 
 // Load env from project root - handle both ts-node and compiled dist/ usage
-const envPath = fs.existsSync(path.resolve(__dirname, '../.env.local'))
-    ? path.resolve(__dirname, '../.env.local')
-    : path.resolve(__dirname, '../../.env.local');
-dotenv.config({ path: envPath });
+const possiblePaths = [
+    path.resolve(__dirname, '../.env.local'),
+    path.resolve(__dirname, '../../.env.local'),
+    path.resolve(process.cwd(), '.env.local'),
+    path.resolve(process.cwd(), '../.env.local'),
+    path.resolve(process.cwd(), 'services/.env.local')
+];
+const envPath = possiblePaths.find(p => fs.existsSync(p));
+if (envPath) {
+    console.log(`[SERVER] Loading env from: ${envPath}`);
+    dotenv.config({ path: envPath });
+} else {
+    dotenv.config();
+}
 
 const app = express();
 const PORT = process.env.PORT || 3001;
