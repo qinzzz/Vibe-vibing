@@ -6,9 +6,13 @@ import OpenAI from 'openai';
 import { saveWord, saveWordsBatch, getStomachContent, deleteWord, clearStomach, saveWorm, getWorms, deleteWorm, deleteWormWords, saveGeneratedContent, getCachedContent, saveThoughtFragment, getThoughtFragments } from './db';
 import { generatePsychedelicDiary } from './psychedelicGenerator';
 import path from 'path';
+import fs from 'fs';
 
-// Load env from project root
-dotenv.config({ path: path.resolve(__dirname, '../.env.local') });
+// Load env from project root - handle both ts-node and compiled dist/ usage
+const envPath = fs.existsSync(path.resolve(__dirname, '../.env.local'))
+    ? path.resolve(__dirname, '../.env.local')
+    : path.resolve(__dirname, '../../.env.local');
+dotenv.config({ path: envPath });
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -103,7 +107,7 @@ let newsCacheFetchedAt = 0;
 // --- AI Quota & Reliability Management ---
 // We rotate through models to maximize free tier usage across different quotas
 const GEMINI_MODELS = [
-    'gemini-1.5-flash-latest',
+    'gemini-1.5-flash',
     'gemini-1.5-flash-8b-latest',
     'gemini-2.0-flash-exp',
     'gemini-1.5-pro-latest'
