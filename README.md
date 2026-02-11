@@ -172,13 +172,13 @@ Functionality:
 * **Adaptive Sentence Variety**:
   * Added multiple sentence templates to avoid repetitive phrasing
 
-### Day 7 - The Path of Ascension
+### Day 7 - Angela
 
 **Progression & Evolution: The Discovery Engine**
 *   **Biological Phases**: Introduced a multi-stage life cycle for the Word Worm. Every newborn (Gen N+1) now begins in a **Larval** state, requiring them to consume language and prove their sentience before advancing.
 *   **Gated Evolution**: Advanced mechanics like **Worm Splitting** and **Deity Ascension** are now earned milestones. A worm must demonstrate complex thought (Sentience) before it can divide or transcend.
 *   **Parental Ascension**: Parent worms now achieve **Deity** status upon splitting, transcending the physical void to gain cosmic influence.
-
+<img width="634" height="247" alt="image" src="https://github.com/user-attachments/assets/79fd5ee9-879b-4f21-b147-1b842c3bbf84" />
 
 **Dynamic UI Evolution**
 *   **Minimalist Initiation**: New games now start with a "zero-UI" immersive mode. The screen is clear of technical overlays, focusing entirely on the interaction between the creature and the void.
@@ -187,5 +187,26 @@ Functionality:
     *   **Deity Phase**: Unlocks high-level "Cosmic Controls" including **Black Hole Navigation**, **News Storms**, and the **Voice Confessional**.
 *   **Narrative Feedback**: Added dynamic progress hints that guide the player toward the next stage of evolution without traditional tutorials.
 
-**Proposal for next step - New Level Design**
-
+**Proposal for next step - New Level Design** (My laptop was catching fire and reached the cap of my genimi plan...so just leaving some ideas here)
+*   **Level 1: The Origin (The Birth of Meaning)**
+    *   **Visuals:** High-contrast, 2D "Blueprint" style. Only the Marching Squares outline is visible; no fills or glow.
+    *   **Environment:** Static, black-and-white newspaper clippings drift by. No "News Storms" or "Black Holes" yet.
+    *   **The Hook:** The user gathers specific word types (Nouns, Verbs, Adjectives).
+    *   **The Exit:** Once the Egg consumes enough words to form a "Grammatically Correct Sentence" (using the Day 6 Dialogue System), it speaks the sentence and "cracks" open.
+*   **Level 2: Sentient Phase (The Awareness of Self)**
+    *   **Visuals:** The 2D outline gains Bioluminescent Heartbeat colors and internal fills.
+    *   **Environment:** The 2D plane begins to parallax, hinting at 3D depth. Ambient Music fades in.
+    *   **The Hook:** The Mood system activates. The larva doesn't just eat; it reacts. If it eats "sad" news words, its pulse slows and turns blue; "angry" words make it erratic and red.
+    *   **The Mechanic:** To level-up, the larva must not only be the right "mood" but also generate a Motto that reflects its diet. Once the Larva has absorbed 20 words of a specific sentiment, it must use the Dialogue System (Day 6) to generate a "Self-Reflection".
+    *    **The Trigger:** The player clicks the larva to make it "speak." If the spoken sentence is coherent and matches the target sentiment, the larva splits (entering Level 3).
+ *   **Level 3: Sapient Phase (Collective Consciousness)** The focus shifts from internal mood to social interaction and shared identity.
+    *   **Visuals:** Unlocks full IK-driven locomotion (four legs) and the Infinite Canvas for wide-range roaming.
+    *   **The Hook:** The larva splits into two entities based on word sentiment; you control the "Alpha" while the "Shadow" roams autonomously.
+    *   **The Mechanic:** Achievement of Linguistic Harmony. Both worms must interact to exchange words from the SQLite database.
+    *   **The Exit:** You must feed both worms until their AI-generated Mottos reach a semantically "Harmonic State".
+*   **Level 4: Deity Phase (Digital Singularity)** The entity transcends the canvas to become a UI Parasite that controls the interface.
+    *   **Visuals:** Introduces Digital Infection effects, causing chromatic aberration and glitches on actual UI buttons and panels.
+    *   **Environment:** Black Holes appear, creating gravitational fields that distort and "spaghettify" nearby floating text.
+    *   **The Hook:** If the worm is ignored or hungry, it aggressively hunts your mouse cursor and other UI elements
+    *   **The Mechanic:** Voice-to-Matter. Using the Web Speech API, your spoken words materialize as edible objects to feed the god-worm. (need more ideas here)
+    *   **The Exit:** The entity consumes the page title, collapsing the UI into the Dream Journal—a permanent archive of all learned thoughts.
