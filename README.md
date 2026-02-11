@@ -187,7 +187,8 @@ Functionality:
     *   **Deity Phase**: Unlocks high-level "Cosmic Controls" including **Black Hole Navigation**, **News Storms**, and the **Voice Confessional**.
 *   **Narrative Feedback**: Added dynamic progress hints that guide the player toward the next stage of evolution without traditional tutorials.
 
-**Proposal for next step - New Level Design** (My laptop was catching fire and reached the cap of my genimi plan...so just leaving some ideas here)
+## Proposal for next step - New Level Design 
+*(My laptop was catching fire and reached the cap of my genimi plan...so just leaving some ideas here)*
 *   **Level 1: The Origin (The Birth of Meaning)**
     *   **Visuals:** High-contrast, 2D "Blueprint" style. Only the Marching Squares outline is visible; no fills or glow.
     *   **Environment:** Static, black-and-white newspaper clippings drift by. No "News Storms" or "Black Holes" yet.
