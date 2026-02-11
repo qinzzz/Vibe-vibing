@@ -1,6 +1,8 @@
 import { System, Worm } from '../core/types';
 import { Engine } from '../core/Engine';
 import { EVENTS } from '../core/events';
+import { GameDirector } from './GameDirector';
+import { DiscoveryEngine } from './DiscoveryEngine';
 
 const LIFECYCLE_CONSTANTS = {
     SATIATION_DECAY_RATE: 0.05,      // Per second
@@ -40,8 +42,12 @@ export class WormLifecycleSystem implements System {
         const now = Date.now();
 
         this.engine.wormState.worms.forEach(worm => {
-            // Decay satiation over time
-            worm.satiation = Math.max(0, worm.satiation - LIFECYCLE_CONSTANTS.SATIATION_DECAY_RATE * deltaSeconds);
+            // Decay satiation over time (accelerated for DEITY phase)
+            let decayRate = LIFECYCLE_CONSTANTS.SATIATION_DECAY_RATE;
+            if (worm.evolutionPhase === 2 /* DEITY */) {
+                decayRate *= 5.0; // Deity metabolism is cosmic and intense
+            }
+            worm.satiation = Math.max(0, worm.satiation - decayRate * deltaSeconds);
 
             // Starving? Lose health
             if (worm.satiation < LIFECYCLE_CONSTANTS.STARVATION_THRESHOLD) {
@@ -60,7 +66,9 @@ export class WormLifecycleSystem implements System {
             const isReady =
                 worm.satiation >= LIFECYCLE_CONSTANTS.REPRODUCTION_THRESHOLD &&
                 worm.vocabulary.size >= LIFECYCLE_CONSTANTS.MIN_VOCAB_TO_REPRODUCE &&
-                worm.health >= LIFECYCLE_CONSTANTS.HEALTH_REPRODUCTION_THRESHOLD;
+                worm.health >= LIFECYCLE_CONSTANTS.HEALTH_REPRODUCTION_THRESHOLD &&
+                GameDirector.isFeatureEnabled(worm, 'SPLITTING') &&
+                worm.hasProvedSentience;
 
             if (isReady) {
                 this.engine.events.emit(EVENTS.READY_TO_REPRODUCE, worm);
@@ -90,9 +98,14 @@ export class WormLifecycleSystem implements System {
                 thickness: worm.thickness,
                 speedMultiplier: worm.speedMultiplier,
                 birthTime: worm.birthTime,
-                satiation: worm.satiation,
                 health: worm.health,
-                lastMeal: worm.lastMeal
+                lastMeal: worm.lastMeal,
+                evolutionPhase: worm.evolutionPhase,
+                satiation: worm.satiation,
+                total_words_consumed: worm.totalWordsConsumed,
+                hasProvedSentience: worm.hasProvedSentience,
+                coreRadius: worm.coreRadius,
+                hipRadius: worm.hipRadius
             })
         }).catch(err => console.error('[WORM] Failed to save:', err));
     }
@@ -127,15 +140,19 @@ export class WormLifecycleSystem implements System {
     }
 
     draw(ctx: CanvasRenderingContext2D) {
-        // Draw lifecycle bars above each worm
+        // Draw lifecycle bars above each worm - Gated by Phase 2
         this.engine.wormState.worms.forEach(worm => {
+            if (!DiscoveryEngine.isFeatureEnabled(worm, 'BIO_BARS')) return;
+
             const x = worm.corePos.x;
             const y = worm.corePos.y - 120;
 
             // Check if ready to reproduce
             const isReady = worm.satiation >= LIFECYCLE_CONSTANTS.REPRODUCTION_THRESHOLD &&
                 worm.vocabulary.size >= LIFECYCLE_CONSTANTS.MIN_VOCAB_TO_REPRODUCE &&
-                worm.health >= LIFECYCLE_CONSTANTS.HEALTH_REPRODUCTION_THRESHOLD;
+                worm.health >= LIFECYCLE_CONSTANTS.HEALTH_REPRODUCTION_THRESHOLD &&
+                GameDirector.isFeatureEnabled(worm, 'SPLITTING') &&
+                worm.hasProvedSentience;
 
             // Draw ready indicator
             if (isReady && worm.id === this.engine.wormState.activeWormId) {
@@ -146,31 +163,7 @@ export class WormLifecycleSystem implements System {
                 ctx.fillText('⚡ SPACE TO SPLIT', x, y - 15);
                 ctx.restore();
             }
-
-            // Satiation bar (yellow)
-            this.drawBar(ctx, x, y, worm.satiation, 'rgba(234, 179, 8, 0.8)');
-
-            // Health bar (red)
-            this.drawBar(ctx, x, y + 12, worm.health, 'rgba(239, 68, 68, 0.8)');
         });
-    }
-
-    private drawBar(ctx: CanvasRenderingContext2D, x: number, y: number, value: number, color: string) {
-        const width = 60;
-        const height = 6;
-
-        // Background
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-        ctx.fillRect(x - width / 2, y, width, height);
-
-        // Fill
-        ctx.fillStyle = color;
-        ctx.fillRect(x - width / 2, y, (width * value) / 100, height);
-
-        // Border
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(x - width / 2, y, width, height);
     }
 
     cleanup() {

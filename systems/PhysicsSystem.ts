@@ -22,6 +22,24 @@ export class PhysicsSystem implements System {
 
         // Listen for new worms being born
         this.engine.events.on(EVENTS.WORM_BORN, this.handleWormBorn);
+        this.engine.events.on(EVENTS.PARTICLE_SPAWN, this.handleParticleSpawn.bind(this));
+    }
+
+    private handleParticleSpawn(data: Partial<SoulParticle> & { x: number, y: number, type: SoulParticle['type'] }) {
+        const worm = this.engine.activeWorm;
+        if (!worm.particles) worm.particles = [];
+
+        worm.particles.push({
+            x: data.x,
+            y: data.y,
+            vx: data.vx ?? (Math.random() - 0.5) * 1.5,
+            vy: data.vy ?? (Math.random() - 0.5) * 1.5,
+            life: data.life ?? 2.0,
+            maxLife: data.maxLife ?? 2.0,
+            size: data.size ?? (3 + Math.random() * 2),
+            type: data.type,
+            color: data.color ?? this.getMoodColor(worm.soul?.identity?.mood || 'watchful').l > 50 ? 'white' : 'gold' // Fallback color
+        });
     }
 
     private handleWormBorn = (worm: Worm) => {
@@ -199,7 +217,7 @@ export class PhysicsSystem implements System {
         if (Math.random() > chance) return;
 
         const core = worm.corePos;
-        const r = this.engine.config.coreRadius * worm.sizeMultiplier;
+        const r = (worm.coreRadius || this.engine.config.coreRadius) * (worm.sizeMultiplier || 1);
 
         // Random position on surface
         const angle = Math.random() * Math.PI * 2;
@@ -305,51 +323,56 @@ export class PhysicsSystem implements System {
         const outlineColor = `hsla(${renderHue}, ${renderSat}%, ${Math.max(20, renderLight - 20)}%, 0.6)`; // Darker outline
         const coreColor = `hsla(${renderHue}, ${renderSat}%, ${renderLight}%, 0.4)`;
 
-        const coreRadius = s.coreRadius * worm.sizeMultiplier;
-        const hipRadius = s.hipRadius * worm.sizeMultiplier;
-        const kneeRadius = s.kneeRadius * worm.sizeMultiplier;
-        const footRadius = s.footRadius * worm.sizeMultiplier;
+        const coreRadius = (worm.coreRadius || s.coreRadius) * (worm.sizeMultiplier || 1);
+        const hipRadius = (worm.hipRadius || s.hipRadius) * (worm.sizeMultiplier || 1);
+        const kneeRadius = s.kneeRadius * (worm.sizeMultiplier || 1);
+        const footRadius = s.footRadius * (worm.sizeMultiplier || 1);
 
-        // --- INNER GLOW (brighter + larger as it eats more words) ---
-        // How full the worm is (0..1). You can swap satiation for swallowedWords if you want.
-        const fullness = Math.min(1, (worm.satiation ?? 0) / 100);
+        // --- INNER GLOW / BIOLUMINESCENCE (Gated by SENTIENT Phase) ---
+        const isBioluminescent = (worm.evolutionPhase || 0) >= 1; // 1 = SENTIENT
 
-        // Heartbeat: frequency + amplitude scale with fullness
-        const t = performance.now() * 0.001;
+        if (isBioluminescent) {
+            // How full the worm is (0..1)
+            const fullness = Math.min(1, (worm.satiation ?? 0) / 100);
 
-        // A "thump" waveform: (sin)^3 gives a punchy beat instead of smooth breathing
-        const thump = Math.pow(Math.max(0, Math.sin(t * (1.2 + fullness * 1.6))), 3);
+            // Heartbeat: frequency + amplitude scale with fullness
+            const t = performance.now() * 0.001;
+            const thump = Math.pow(Math.max(0, Math.sin(t * (1.2 + fullness * 1.6))), 3);
 
-        // Pulse strength grows as it eats more
-        const pulse = 1 + thump * (0.03 + fullness * 0.12);
+            // Pulse strength grows as it eats more
+            const pulse = 1 + thump * (0.05 + fullness * 0.15);
 
-        // Glow grows with fullness, and pulse modulates it
-        const glowRadius = coreRadius * (0.32 + fullness * 0.50) * pulse;
+            // Glow grows with fullness, and pulse modulates it
+            const glowRadius = coreRadius * (0.4 + fullness * 0.60) * pulse;
+            const glowAlpha = 0.2 + fullness * 0.25;
 
-        // Brightness grows too, but stays soft
-        const glowAlpha = 0.1 + fullness * 0.16;
+            const glow = ctx.createRadialGradient(
+                core.x, core.y, coreRadius * 0.1,
+                core.x, core.y, glowRadius
+            );
 
-        const glow = ctx.createRadialGradient(
-        core.x, core.y, coreRadius * 0.15,
-        core.x, core.y, glowRadius
-        );
+            glow.addColorStop(0, `hsla(${renderHue}, ${renderSat}%, ${Math.min(95, renderLight + 30)}%, ${glowAlpha})`);
+            glow.addColorStop(0.5, `hsla(${renderHue}, ${renderSat}%, ${renderLight}%, ${glowAlpha * 0.5})`);
+            glow.addColorStop(1, `hsla(${renderHue}, ${renderSat}%, ${renderLight}%, 0)`);
 
-        glow.addColorStop(0, `hsla(${renderHue}, ${renderSat}%, ${Math.min(95, renderLight + 25)}%, ${glowAlpha})`);
-        glow.addColorStop(1, `hsla(${renderHue}, ${renderSat}%, ${renderLight}%, 0)`);
+            ctx.save();
+            ctx.globalCompositeOperation = "screen";
 
-        // draw glow behind outline
-        ctx.save();
-        ctx.globalCompositeOperation = "screen"; // softer than "lighter"
-        ctx.fillStyle = glow;
-        ctx.beginPath();
-        ctx.arc(core.x, core.y, glowRadius, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
+            // Add shadow blur for a more ethereal feel
+            ctx.shadowBlur = 20 * pulse;
+            ctx.shadowColor = `hsla(${renderHue}, ${renderSat}%, 70%, 0.5)`;
+
+            ctx.fillStyle = glow;
+            ctx.beginPath();
+            ctx.arc(core.x, core.y, glowRadius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
         // --- END INNER GLOW ---
 
         // Draw Skeleton
         if (s.showSkeleton) {
-            ctx.strokeStyle = `hsla(${finalHue}, 50%, 70%, 0.3)`;
+            ctx.strokeStyle = `hsla(${finalHue}, 50%, 70%, 0)`;
             ctx.lineWidth = 1;
             legs.forEach(leg => {
                 const h = { x: core.x + leg.hipOffset.x, y: core.y + leg.hipOffset.y };
@@ -456,7 +479,7 @@ export class PhysicsSystem implements System {
         const eyeOffset = coreRadius * 0.35;
         const eyeSize = 2;
 
-        ctx.strokeStyle = `rgba(255, 255, 255, 0.6)`;
+        ctx.strokeStyle = `rgba(255, 255, 255, 0.2)`;
         ctx.lineWidth = 1.5;
         ctx.beginPath();
 

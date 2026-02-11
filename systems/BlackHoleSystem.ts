@@ -1,6 +1,8 @@
 import { Engine } from '../core/Engine';
 import { System, Vector2D } from '../core/types';
 import { EVENTS } from '../core/events';
+import { GameDirector } from './GameDirector';
+import { DiscoveryEngine } from './DiscoveryEngine';
 
 export interface BlackHole {
     id: string;
@@ -67,9 +69,13 @@ export class BlackHoleSystem implements System {
     }
 
     update(dt: number) {
+        const worm = this.engine.activeWorm;
+        if (!DiscoveryEngine.isFeatureEnabled(worm, 'BLACK_HOLE')) {
+            return;
+        }
+
         const dtSec = dt / 1000;
         const now = performance.now();
-        const worm = this.engine.activeWorm;
 
         // Update black hole animations
         for (const hole of this.blackHoles) {
@@ -115,6 +121,8 @@ export class BlackHoleSystem implements System {
     }
 
     draw(ctx: CanvasRenderingContext2D) {
+        if (!DiscoveryEngine.isFeatureEnabled(this.engine.activeWorm, 'BLACK_HOLE')) return;
+
         // Draw black holes and their effects
         this.drawBlackHoles(ctx);
 

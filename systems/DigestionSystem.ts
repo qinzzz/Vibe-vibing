@@ -1,8 +1,9 @@
-import { System } from '../core/types';
+import { System, SwallowedWord, Vector2D, InternalLetter, EatingState, ActiveLetterFeed, SpeechBubble, EvolutionPhase, Worm } from '../core/types';
 import { Engine } from '../core/Engine';
-import { SwallowedWord, EatingState, ActiveLetterFeed, SpeechBubble } from '../core/types';
 import { EVENTS } from '../core/events';
 import { BLOB_CONSTANTS, COLORS } from '../constants';
+import { GameDirector } from './GameDirector';
+import { DiscoveryEngine } from './DiscoveryEngine';
 
 export class DigestionSystem implements System {
     private engine!: Engine;
@@ -56,6 +57,24 @@ export class DigestionSystem implements System {
         this.engine.events.on('INPUT_START', this.handleInput);
         this.engine.events.on('INPUT_RELEASE', this.handleReleaseInput);
 
+        this.engine.events.on(EVENTS.GAME_RESET, () => {
+            this.speechBubble = null;
+            this.activeLetterFeed = null;
+            this.letterQueue = [];
+            this.activeWord = null;
+            this.eatingState = EatingState.IDLE;
+            this.canReproduce = false;
+        });
+
+        // Allow external speech triggers (e.g. from Deity Hunger)
+        this.engine.events.on(EVENTS.WORM_SPEAK, (data: { text: string, duration?: number, isGlitch?: boolean }) => {
+            this.speechBubble = {
+                text: data.text,
+                opacity: 0,
+                timer: data.duration || 120
+            };
+        });
+
         this.hydrateStomach(3); // Start hydration with retries
     }
 
@@ -99,10 +118,10 @@ export class DigestionSystem implements System {
         });
 
         if (clickedWord) {
-            console.log(`[RELEASE] Releasing word: ${clickedWord.text}`);
+            console.log(`[RELEASE] Releasing word: ${clickedWord.text} `);
 
             // 1. Remove from backend
-            fetch(`/api/stomach/${clickedWord.id}`, { method: 'DELETE' })
+            fetch(`/ api / stomach / ${clickedWord.id} `, { method: 'DELETE' })
                 .then(res => {
                     if (res.ok) {
                         // 2. Emit removal event (updates local state)
@@ -125,10 +144,11 @@ export class DigestionSystem implements System {
     private handleReproduceTrigger = () => {
         const worm = this.engine.activeWorm;
         // Strict verify conditions before splitting
-        // Thresholds match WormLifecycleSystem
         const isReady = worm.satiation >= 99 &&
             worm.vocabulary.size >= 12 &&
-            worm.health >= 95;
+            worm.health >= 95 &&
+            GameDirector.isFeatureEnabled(worm, 'SPLITTING') &&
+            worm.hasProvedSentience;
 
         if (isReady) {
             // Show confirmation prompt first
@@ -139,7 +159,7 @@ export class DigestionSystem implements System {
             };
             this.reproduceWorm();
         } else {
-            console.warn(`[REPRODUCE] Not ready. Satiation: ${worm.satiation}, Vocab: ${worm.vocabulary.size}, Health: ${worm.health}`);
+            console.warn(`[REPRODUCE] Not ready.Satiation: ${worm.satiation}, Vocab: ${worm.vocabulary.size}, Health: ${worm.health} `);
             this.speechBubble = {
                 text: "not full yet...",
                 opacity: 0,
@@ -174,12 +194,30 @@ export class DigestionSystem implements System {
         this.rebuildVocabulary();
     };
 
-    private handleStomachClear = () => {
-        const worm = this.engine.activeWorm;
-        worm.swallowedWords = [];
-        (worm as any).digestionQueue = [];
-        worm.vocabulary.clear();
-        this.engine.events.emit(EVENTS.VOCAB_UPDATED, []);
+    private handleStomachClear = async () => {
+        try {
+            // 1. Tell server to wipe everything
+            await fetch('/api/reset', { method: 'POST' });
+
+            // 2. Clear local memory
+            this.engine.wormState.worms.clear();
+            this.engine.wormState.nextWormId = 0;
+
+            // 3. Create fresh worm-0
+            const worm = this.engine.createWorm(
+                'worm-0',
+                null,
+                0,
+                { x: window.innerWidth / 2, y: window.innerHeight / 2 }
+            );
+            this.engine.wormState.activeWormId = 'worm-0';
+
+            // 4. Update UI
+            this.engine.events.emit(EVENTS.VOCAB_UPDATED, []);
+            // WORM_BORN is emitted by createWorm
+        } catch (err) {
+            console.error('[RESET] Failed:', err);
+        }
     };
 
     private rebuildVocabulary() {
@@ -219,9 +257,10 @@ export class DigestionSystem implements System {
                     worm.thickness = dbWorm.thickness || 0.25;
                     worm.speedMultiplier = dbWorm.speed_multiplier;
                     worm.birthTime = dbWorm.birth_time;
-                    worm.satiation = dbWorm.satiation;
                     worm.health = dbWorm.health;
                     worm.lastMeal = dbWorm.last_meal;
+                    worm.evolutionPhase = dbWorm.evolution_level ?? EvolutionPhase.LARVAL;
+                    worm.totalWordsConsumed = dbWorm.total_words_consumed ?? 0;
                     worm.vocabulary.clear();
                     worm.swallowedWords = [];
                     this.ensureSoulState(worm as any);
@@ -291,7 +330,7 @@ export class DigestionSystem implements System {
                 // Emit hydration complete event so UI can update
                 this.engine.events.emit(EVENTS.WORMS_HYDRATED, {});
 
-                console.log(`[HYDRATE] ✅ Restoration complete. worms: ${this.engine.wormState.worms.size}, words: ${words.length}`);
+                console.log(`[HYDRATE] ✅ Restoration complete.worms: ${this.engine.wormState.worms.size}, words: ${words.length} `);
             })
             .catch(err => {
                 if (retries > 0) {
@@ -319,12 +358,17 @@ export class DigestionSystem implements System {
                 birthTime: worm.birthTime,
                 satiation: worm.satiation,
                 health: worm.health,
-                lastMeal: worm.lastMeal
+                lastMeal: worm.lastMeal,
+                evolutionPhase: worm.evolutionPhase,
+                total_words_consumed: worm.totalWordsConsumed,
+                hasProvedSentience: worm.hasProvedSentience,
+                coreRadius: worm.coreRadius,
+                hipRadius: worm.hipRadius
             })
         });
 
         if (!response.ok) {
-            throw new Error(`Failed to save worm: ${response.status}`);
+            throw new Error(`Failed to save worm: ${response.status} `);
         }
 
         // Wait for response body to ensure DB write completes
@@ -339,7 +383,15 @@ export class DigestionSystem implements System {
     };
 
     private handleThoughtReady = (text: string) => {
+        const worm = this.engine.activeWorm;
         this.speechBubble = { text, opacity: 0, timer: 300 }; // Extended from 120 (5sec at 60fps)
+
+        // Sentience Proof Check (5+ words)
+        const wordCount = text.split(/\s+/).filter(Boolean).length;
+        if (wordCount >= 5 && !worm.hasProvedSentience) {
+            worm.hasProvedSentience = true;
+            this.engine.events.emit(EVENTS.JOURNAL_ENTRY, `SYSTEM ALERT: [${worm.name || worm.id}] Sentience verified through complex thought construction.`);
+        }
     };
 
     private handleStopEating = () => {
@@ -356,7 +408,9 @@ export class DigestionSystem implements System {
 
         this.engine.wormState.worms.forEach(w => {
             this.ensureSoulState(w as any);
-            this.updateSoulAxes(w as any, dtSec);
+            if (GameDirector.isFeatureEnabled(w as any, 'SOUL')) {
+                this.updateSoulAxes(w as any, dtSec);
+            }
             this.updateDigestionStages(w as any, dtSec);
         });
 
@@ -455,6 +509,7 @@ export class DigestionSystem implements System {
         });
 
         worm.vocabulary.add(w.text);
+        worm.totalWordsConsumed = (worm.totalWordsConsumed || 0) + 1;
         this.enqueueDigestion(worm as any, w.id, w.text);
 
         // Emit word consumed event (for satiation increase)
@@ -479,27 +534,31 @@ export class DigestionSystem implements System {
 
         // Journal Logic
         this.journalBuffer.push(w.text);
-        console.log(`[JOURNAL] Buffered word: "${w.text}" (${this.journalBuffer.length}/${this.journalTriggerLimit})`);
+        console.log(`[JOURNAL] Buffered word: "${w.text}"(${this.journalBuffer.length} / ${this.journalTriggerLimit})`);
 
         if (this.journalBuffer.length >= this.journalTriggerLimit) {
             const wordsToProcess = [...this.journalBuffer];
             this.journalBuffer = [];
             this.journalTriggerLimit = Math.floor(Math.random() * 3) + 3; // Reset limit 3-5
 
-            console.log(`[JOURNAL] Triggering API call with words:`, wordsToProcess);
-            fetch('/api/journal', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ words: wordsToProcess })
-            })
-                .then(res => res.json())
-                .then(data => {
-                    if (data.text) {
-                        console.log(`[JOURNAL] Entry received from API:`, data.text);
-                        this.engine.events.emit(EVENTS.JOURNAL_ENTRY, data.text);
-                    }
+            // Log of the Labyrinth Gating (Phase 2+)
+            const canLog = DiscoveryEngine.isFeatureEnabled(worm, 'JOURNAL_LOG');
+            if (canLog) {
+                console.log(`[JOURNAL] Triggering API call with words: `, wordsToProcess);
+                fetch('/api/journal', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ words: wordsToProcess })
                 })
-                .catch(err => console.error("[JOURNAL] API call failed:", err));
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.text) {
+                            console.log(`[JOURNAL] Entry received from API: `, data.text);
+                            this.engine.events.emit(EVENTS.JOURNAL_ENTRY, data.text);
+                        }
+                    })
+                    .catch(err => console.error("[JOURNAL] API call failed:", err));
+            }
         }
     }
 
@@ -545,7 +604,7 @@ export class DigestionSystem implements System {
 
     private async reproduceWorm() {
         const parent = this.engine.activeWorm;
-        const childId = `worm-${this.engine.wormState.nextWormId++}`;
+        const childId = `worm - ${this.engine.wormState.nextWormId++} `;
         const parentWords = Array.from(parent.vocabulary);
 
         console.log(`[REPRODUCE] Parent ${parent.id} has ${parentWords.length} words, attempting emotional split...`);
@@ -562,7 +621,7 @@ export class DigestionSystem implements System {
             });
             const { bucket1, bucket2 } = await splitResponse.json();
 
-            console.log(`[REPRODUCE] Split result - Parent keeps: ${bucket1.length}, Child gets: ${bucket2.length}`);
+            console.log(`[REPRODUCE] Split result - Parent keeps: ${bucket1.length}, Child gets: ${bucket2.length} `);
 
             // Step 2: Create child worm with bucket2 words
             const angle = Math.random() * Math.PI * 2;
@@ -738,7 +797,7 @@ export class DigestionSystem implements System {
             // Step 8: Persist word changes to database efficiently
 
             // A. Clear parent's words
-            await fetch(`/api/worms/${parent.id}/words`, { method: 'DELETE' })
+            await fetch(`/ api / worms / ${parent.id}/words`, { method: 'DELETE' })
                 .catch(err => console.error('[REPRODUCE] Failed to clear parent words:', err));
 
             // B. Batch save parent words
@@ -779,6 +838,14 @@ export class DigestionSystem implements System {
             this.canReproduce = false;
 
             console.log(`[REPRODUCE] Success! Parent: ${bucket1.length}w, Child "${child.name}": ${bucket2.length}w`);
+
+            // Step 10: Evolution (Ascension)
+            // If the parent is Gen 1 or higher, they evolve to DEITY upon split
+            if (parent.generation >= 1 && parent.evolutionPhase !== EvolutionPhase.DEITY) {
+                parent.evolutionPhase = EvolutionPhase.DEITY;
+                this.engine.events.emit(EVENTS.WORM_EVOLVED, { wormId: parent.id, level: EvolutionPhase.DEITY });
+                this.engine.events.emit(EVENTS.JOURNAL_ENTRY, `ASCENSION: [${parent.name || parent.id}] has transcended to DEITY phase after giving birth.`);
+            }
 
             // Emit reproduction complete event
             this.engine.events.emit(EVENTS.REPRODUCTION_COMPLETE, {});
@@ -937,24 +1004,12 @@ export class DigestionSystem implements System {
 
         worm.sizeMultiplier = this.clamp((worm.sizeMultiplier || 1.0) + growth, 0.6, 3.5); // Cap raised to 3.5
 
-        // 2. Thickness: Skin thickness / IsoThreshold
-        // Stubborn/Orderly/Focused -> Thicker skin (Harder to penetrate, more defined)
-        // Tender/Sensitive/Poetic -> Thinner skin (More fluid, blobby)
-        let thicknessChange = 0;
-        if (sums.stubborn > 0) thicknessChange += 0.03;
-        if (sums.orderly > 0) thicknessChange += 0.015;
-        if (sums.focused > 0) thicknessChange += 0.015;
+        // Dynamic Radii Growth
+        // +2px to core per word, +1px to hip
+        worm.coreRadius = this.clamp((worm.coreRadius || this.engine.config.coreRadius) + 2, 80, 250);
+        worm.hipRadius = this.clamp((worm.hipRadius || this.engine.config.hipRadius) + 1, 40, 120);
 
-        if (sums.tender > 0) thicknessChange -= 0.03;
-        if (sums.poetic > 0) thicknessChange -= 0.015;
-        if (sums.hopeful > 0) thicknessChange -= 0.015;
-
-        // Initialize thickness if missing
-        if (typeof worm.thickness !== 'number') worm.thickness = 0.25;
-
-        worm.thickness = this.clamp(worm.thickness + thicknessChange, 0.1, 0.8);
-
-        console.log(`[DIGEST] ${tokens[0]}... -> Size: ${worm.sizeMultiplier.toFixed(3)}, Thick: ${worm.thickness.toFixed(3)}`);
+        console.log(`[DIGEST] ${tokens[0]}... -> CoreR: ${worm.coreRadius}, HipR: ${worm.hipRadius}`);
 
         // Save visual changes
         this.saveWormState(worm).catch(e => console.error("Failed to save visual update", e));
@@ -964,6 +1019,12 @@ export class DigestionSystem implements System {
 
     private regenerateIdentity(worm: any, updateMotto = true) {
         const axes = worm.soul.axes;
+
+        // Motto Gating (Phase 2+)
+        if (updateMotto && !DiscoveryEngine.isFeatureEnabled(worm, 'MOTTO')) {
+            updateMotto = false;
+        }
+
         const moodScores = [
             { label: 'serene', score: axes.calm + axes.hopeful + axes.tender * 0.5 },
             { label: 'watchful', score: axes.focused + axes.curious * 0.6 - axes.social * 0.2 },
@@ -1077,6 +1138,11 @@ export class DigestionSystem implements System {
         if (!worm) return;
         this.ensureSoulState(worm);
 
+        // Gated by Discovery Phase 2+ (Motto or Bio Bars)
+        if (!DiscoveryEngine.isFeatureEnabled(worm, 'MOTTO') && !DiscoveryEngine.isFeatureEnabled(worm, 'BIO_BARS')) {
+            return;
+        }
+
         const coreRadius = this.engine.config.coreRadius * worm.sizeMultiplier;
         const x = worm.corePos.x;
         const y = worm.corePos.y - coreRadius * 1.02;
@@ -1153,18 +1219,30 @@ export class DigestionSystem implements System {
         // Re-enabled shortened card
         this.drawSoulHoverCard(ctx);
         this.engine.wormState.worms.forEach(worm => {
-            worm.swallowedWords.forEach(word => {
-                word.letters.forEach(letter => {
-                    ctx.save();
-                    ctx.translate(letter.pos.x, letter.pos.y);
-                    ctx.rotate(word.rotation);
-                    ctx.font = `bold ${BLOB_CONSTANTS.BASE_LETTER_SIZE}px 'Space Mono'`;
-                    ctx.fillStyle = COLORS.TEXT_IN_BLOB;
-                    ctx.fillText(letter.char, 0, 0);
-                    ctx.restore();
-                });
-            });
+            const count = worm.swallowedWords.length;
+            if (count > 0) {
+                ctx.save();
+                ctx.translate(worm.corePos.x, worm.corePos.y + 25); // Offset to avoid letter overlap
+
+                // Background Badge
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.roundRect(-16, -10, 32, 20, 10);
+                ctx.fill();
+                ctx.stroke();
+
+                // Text
+                ctx.font = `10px 'Space Mono'`;
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(count.toString(), 0, 0);
+                ctx.restore();
+            }
         });
+
 
         // Draw active feed letter
         if (this.activeLetterFeed) {
@@ -1186,24 +1264,30 @@ export class DigestionSystem implements System {
             const b = this.speechBubble;
             ctx.save();
             ctx.globalAlpha = b.opacity;
-            ctx.translate(core.x, core.y - 100);
+            ctx.translate(core.x, core.y + 100);
 
             ctx.font = "bold 13px 'Space Mono'"; // Smaller font (was 18)
             const m = ctx.measureText(b.text);
             const padding = 12, bw = m.width + padding * 2, bh = 30; // Shorter height (was 40)
 
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+            ctx.fillStyle = 'rgba(20, 20, 28, 0.95)';
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+            ctx.lineWidth = 1;
+
             ctx.beginPath();
             ctx.roundRect(-bw / 2, -bh / 2, bw, bh, 12);
             ctx.fill();
+            ctx.stroke();
 
+            // Tail pointing UP (toward worm)
             ctx.beginPath();
-            ctx.moveTo(-10, bh / 2);
-            ctx.lineTo(0, bh / 2 + 10);
-            ctx.lineTo(10, bh / 2);
+            ctx.moveTo(-10, -bh / 2);
+            ctx.lineTo(0, -bh / 2 - 10);
+            ctx.lineTo(10, -bh / 2);
             ctx.fill();
+            ctx.stroke();
 
-            ctx.fillStyle = '#000';
+            ctx.fillStyle = '#fff';
             ctx.fillText(b.text, 0, 0);
             ctx.restore();
         }

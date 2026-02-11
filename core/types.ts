@@ -92,6 +92,8 @@ export interface TextBlock {
     y: number;
     width: number;
     height: number;
+    age?: number;
+    opacity?: number;
 }
 
 export type DigestionStage = 'fresh' | 'digesting' | 'absorbed';
@@ -136,6 +138,12 @@ export interface WormSoul {
     absorbedCount: number;
 }
 
+export enum EvolutionPhase {
+    LARVAL = 0,
+    SENTIENT = 1,
+    DEITY = 2
+}
+
 export interface Worm {
     id: string;
     name?: string;
@@ -155,11 +163,16 @@ export interface Worm {
     targetPos: Vector2D;
     isHoveringEdible: boolean;
     vocabulary: Set<string>;
+    totalWordsConsumed: number; // Lifetime count for evolution
     swallowedWords: SwallowedWord[];
     digestionQueue: DigestionRecord[];
     soul: WormSoul;
     particles: SoulParticle[];
+    evolutionPhase: EvolutionPhase;
     visualColor?: { h: number, s: number, l: number }; // Added for visual evolution
+    hasProvedSentience?: boolean; // Added for progression overhaul
+    coreRadius: number;
+    hipRadius: number;
 }
 
 export interface SoulParticle {

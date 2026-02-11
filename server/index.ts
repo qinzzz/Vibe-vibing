@@ -3,7 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from "@google/genai";
 import OpenAI from 'openai';
-import { saveWord, saveWordsBatch, getStomachContent, deleteWord, clearStomach, saveWorm, getWorms, deleteWorm, deleteWormWords, saveGeneratedContent, getCachedContent, saveThoughtFragment, getThoughtFragments } from './db';
+import { saveWord, saveWordsBatch, getStomachContent, deleteWord, clearStomach, saveWorm, getWorms, deleteWorm, deleteWormWords, saveGeneratedContent, getCachedContent, saveThoughtFragment, getThoughtFragments, clearAllWorms } from './db';
 import { generatePsychedelicDiary } from './psychedelicGenerator';
 import path from 'path';
 import fs from 'fs';
@@ -117,7 +117,7 @@ let newsCacheFetchedAt = 0;
 // --- AI Quota & Reliability Management ---
 // We rotate through models to maximize free tier usage across different quotas
 const GEMINI_MODELS = [
-    'gemini-1.5-flash',
+    'gemini-1.5-flash-latest',
     'gemini-1.5-flash-8b-latest',
     'gemini-2.0-flash-exp',
     'gemini-1.5-pro-latest'
@@ -866,6 +866,17 @@ app.delete('/api/stomach', (req, res) => {
     }
 });
 
+app.post('/api/reset', (req, res) => {
+    try {
+        console.log('[SERVER] 🚨 HARD RESET: Clearing all worms and words.');
+        clearAllWorms();
+        res.json({ success: true });
+    } catch (err) {
+        console.error('[SERVER] Reset failed:', err);
+        res.status(500).json({ error: 'Reset failed' });
+    }
+});
+
 // Worm State Management
 app.get('/api/worms', (req, res) => {
     try {
@@ -886,16 +897,18 @@ app.post('/api/worms', (req, res) => {
         saveWorm({
             id: worm.id,
             name: worm.name,
-            generation: worm.generation,
+            generation: worm.generation || 0,
             parentId: worm.parentId,
-            hue: worm.hue,
-            sizeMultiplier: worm.sizeMultiplier,
+            hue: worm.hue ?? 200,
+            sizeMultiplier: worm.sizeMultiplier ?? 1.0,
             thickness: worm.thickness ?? 0.25,
-            speedMultiplier: worm.speedMultiplier,
-            birthTime: worm.birthTime,
-            satiation: worm.satiation,
-            health: worm.health,
-            lastMeal: worm.lastMeal
+            speedMultiplier: worm.speedMultiplier ?? 1.0,
+            birthTime: worm.birthTime ?? Date.now(),
+            satiation: worm.satiation ?? 50,
+            health: worm.health ?? 100,
+            lastMeal: worm.lastMeal ?? Date.now(),
+            evolutionPhase: worm.evolutionPhase ?? 0,
+            totalWordsConsumed: worm.total_words_consumed || 0
         });
         res.json({ success: true });
     } catch (err) {

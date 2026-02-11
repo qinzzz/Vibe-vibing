@@ -33,7 +33,9 @@ db.exec(`
     birth_time INTEGER NOT NULL,
     satiation REAL NOT NULL,
     health REAL NOT NULL,
-    last_meal INTEGER NOT NULL
+    last_meal INTEGER NOT NULL,
+    evolution_level INTEGER DEFAULT 0,
+    total_words_consumed INTEGER DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS stomach (
@@ -66,6 +68,14 @@ try {
     console.log('[DB] Migrating: Adding thickness column to worms table...');
     db.exec('ALTER TABLE worms ADD COLUMN thickness REAL DEFAULT 0.25');
   }
+  if (!tableInfo.some(col => col.name === 'evolution_level')) {
+    console.log('[DB] Migrating: Adding evolution_level column to worms table...');
+    db.exec('ALTER TABLE worms ADD COLUMN evolution_level INTEGER DEFAULT 0');
+  }
+  if (!tableInfo.some(col => col.name === 'total_words_consumed')) {
+    console.log('[DB] Migrating: Adding total_words_consumed column to worms table...');
+    db.exec('ALTER TABLE worms ADD COLUMN total_words_consumed INTEGER DEFAULT 0');
+  }
 } catch (err) {
   console.error('[DB] Migration check failed:', err);
 }
@@ -84,11 +94,13 @@ export const saveWorm = (worm: {
   satiation: number;
   health: number;
   lastMeal: number;
+  evolutionPhase: number;
+  totalWordsConsumed: number;
 }) => {
   const stmt = db.prepare(`
     INSERT OR REPLACE INTO worms
-    (id, name, generation, parent_id, hue, size_multiplier, thickness, speed_multiplier, birth_time, satiation, health, last_meal)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (id, name, generation, parent_id, hue, size_multiplier, thickness, speed_multiplier, birth_time, satiation, health, last_meal, evolution_level, total_words_consumed)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   stmt.run(
     worm.id,
@@ -102,7 +114,9 @@ export const saveWorm = (worm: {
     worm.birthTime,
     worm.satiation,
     worm.health,
-    worm.lastMeal
+    worm.lastMeal,
+    worm.evolutionPhase,
+    worm.totalWordsConsumed
   );
 };
 
@@ -121,6 +135,8 @@ export const getWorms = () => {
     satiation: number;
     health: number;
     last_meal: number;
+    evolution_level: number;
+    total_words_consumed: number;
   }>;
 };
 
@@ -130,6 +146,11 @@ export const deleteWorm = (wormId: string) => {
 };
 
 // Word Management (updated to include worm_id)
+export const clearAllWorms = () => {
+  db.prepare('DELETE FROM stomach').run();
+  db.prepare('DELETE FROM worms').run();
+};
+
 export const saveWord = (id: string, wormId: string, text: string) => {
   const stmt = db.prepare('INSERT OR REPLACE INTO stomach (id, worm_id, text) VALUES (?, ?, ?)');
   stmt.run(id, wormId, text);

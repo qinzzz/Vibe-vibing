@@ -13,6 +13,7 @@ import { ThoughtService } from '../services/ThoughtService';
 import { VoiceInputSystem } from '../systems/VoiceInputSystem';
 import { VoiceVisualsSystem } from '../systems/VoiceVisualsSystem';
 import { UIPredatorSystem } from '../systems/UIPredatorSystem';
+import { GameDirector } from '../systems/GameDirector';
 
 export const useEngine = (config: GameConfig, onWordSwallowed?: (word: string) => void) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -27,6 +28,7 @@ export const useEngine = (config: GameConfig, onWordSwallowed?: (word: string) =
         engineRef.current = engine;
 
         // Add Systems (Order matters!)
+        engine.addSystem(new GameDirector());
         engine.addSystem(new ConsciousnessStreamSystem());
         engine.addSystem(new BlackHoleSystem()); // Black holes and gravitational effects
         engine.addSystem(new PhysicsSystem());

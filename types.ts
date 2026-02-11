@@ -134,6 +134,8 @@ export interface TextBlock {
   y: number;
   width: number;
   height: number;
+  age?: number;
+  opacity?: number;
 }
 
 // Worm Lifecycle & Reproduction Types
@@ -165,6 +167,7 @@ export interface Worm {
 
   // Vocabulary (from DigestionSystem)
   vocabulary: Set<string>;
+  totalWordsConsumed: number; // Lifetime count for evolution
   swallowedWords: SwallowedWord[];
   digestionQueue: DigestionRecord[];
   soul: WormSoul;

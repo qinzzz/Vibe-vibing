@@ -7,6 +7,9 @@ import { ControlGroup } from './components/ui/ControlGroup';
 import { Engine } from './core/Engine';
 import { EVENTS } from './core/events';
 import type { Worm } from './types';
+import { EvolutionPhase } from './core/types';
+import { GameDirector } from './systems/GameDirector';
+import { DiscoveryEngine } from './systems/DiscoveryEngine';
 import { LabyrinthJournal } from './components/LabyrinthJournal';
 
 const NEWS_PREFETCH_LIMIT = 25;
@@ -14,147 +17,147 @@ const NEWS_PREFETCH_MS = 2 * 60 * 60 * 1000;
 
 const App: React.FC = () => {
   const VERB_HINTS = new Set([
-  "am","is","are","was","were","be","been","being",
-  "have","has","had","do","does","did",
-  "feel","think","want","need","know","see","hear","remember","forget",
-  "make","makes","made","become","becomes","became",
-  "go","goes","went","come","comes","came","move","moves","moved",
-  "eat","eats","ate","swallow","swallows","swallowed"
-]);
+    "am", "is", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "do", "does", "did",
+    "feel", "think", "want", "need", "know", "see", "hear", "remember", "forget",
+    "make", "makes", "made", "become", "becomes", "became",
+    "go", "goes", "went", "come", "comes", "came", "move", "moves", "moved",
+    "eat", "eats", "ate", "swallow", "swallows", "swallowed"
+  ]);
 
-function cleanToken(t: string) {
-  return t
-    .trim()
-    .replace(/[^\w'’-]+/g, "")     // keep letters/numbers/_ and apostrophes
-    .replace(/_/g, "")
-    .toLowerCase();
-}
-
-function hasVerb(tokens: string[]) {
-  return tokens.some(t => VERB_HINTS.has(t));
-}
-
-function looksHumanReadable(sentence: string) {
-  const rawTokens = sentence.split(/\s+/).filter(Boolean);
-  if (rawTokens.length < 6) return false;           // too short = likely nonsense
-  if (rawTokens.length > 26) return false;          // too long for a bubble
-
-  // Must contain mostly normal word tokens (avoid “%%%%” / random junk)
-  const clean = rawTokens.map(cleanToken).filter(Boolean);
-  const alphaLike = clean.filter(t => /[a-z]/i.test(t));
-  if (alphaLike.length / Math.max(1, clean.length) < 0.75) return false;
-
-  // Avoid spammy repetition like “the the the the”
-  const freq: Record<string, number> = {};
-  for (const t of clean) {
-    freq[t] = (freq[t] || 0) + 1;
-    if (freq[t] >= 4) return false;
+  function cleanToken(t: string) {
+    return t
+      .trim()
+      .replace(/[^\w'’-]+/g, "")     // keep letters/numbers/_ and apostrophes
+      .replace(/_/g, "")
+      .toLowerCase();
   }
 
-  // Must “feel like a sentence”: has a verb hint + ends with punctuation
-  if (!hasVerb(clean)) return false;
-  if (!/[.!?]$/.test(sentence.trim())) return false;
+  function hasVerb(tokens: string[]) {
+    return tokens.some(t => VERB_HINTS.has(t));
+  }
 
-  return true;
-}
+  function looksHumanReadable(sentence: string) {
+    const rawTokens = sentence.split(/\s+/).filter(Boolean);
+    if (rawTokens.length < 6) return false;           // too short = likely nonsense
+    if (rawTokens.length > 26) return false;          // too long for a bubble
 
-function buildSentenceWithFillers(eatenWords: string[]) {
-  const tokens = eatenWords
-    .map(w => (w || "").trim())
-    .filter(Boolean)
-    .map(w => w.replace(/\s+/g, " "));
+    // Must contain mostly normal word tokens (avoid “%%%%” / random junk)
+    const clean = rawTokens.map(cleanToken).filter(Boolean);
+    const alphaLike = clean.filter(t => /[a-z]/i.test(t));
+    if (alphaLike.length / Math.max(1, clean.length) < 0.75) return false;
 
-  if (tokens.length === 0) return null;
+    // Avoid spammy repetition like “the the the the”
+    const freq: Record<string, number> = {};
+    for (const t of clean) {
+      freq[t] = (freq[t] || 0) + 1;
+      if (freq[t] >= 4) return false;
+    }
 
-  // Keep short
-  const core = tokens.slice(-4);
+    // Must “feel like a sentence”: has a verb hint + ends with punctuation
+    if (!hasVerb(clean)) return false;
+    if (!/[.!?]$/.test(sentence.trim())) return false;
 
-  const pick = <T,>(arr: T[]) => arr[Math.floor(Math.random() * arr.length)];
-  const startsOk = (t: string) =>
-    ["i","we","you","he","she","they","it","the","a","an","this","that"].includes(cleanToken(t));
+    return true;
+  }
 
-  const subjectPool = ["I", "I", "I", "I", "This", "The worm"]; 
-  // slight bias toward "I" for consciousness
-  const subject = startsOk(core[0] || "") ? core[0] : pick(subjectPool);
+  function buildSentenceWithFillers(eatenWords: string[]) {
+    const tokens = eatenWords
+      .map(w => (w || "").trim())
+      .filter(Boolean)
+      .map(w => w.replace(/\s+/g, " "));
 
-  // 🧠 Self-aware verbs
-  const introspectiveVerbs = [
-    "wonder",
-    "contemplate",
-    "question",
-    "remember",
-    "notice",
-    "realize",
-    "sense",
-    "consider",
-    "imagine",
-    "observe",
-    "feel"
-  ];
+    if (tokens.length === 0) return null;
 
-  const reflectiveTails = [
-    ["about", "what", "I", "am"],
-    ["what", "this", "means"],
-    ["why", "it", "exists"],
-    ["if", "I", "am", "becoming"],
-    ["whether", "it", "changes", "me"],
-    ["what", "remains"],
-    ["if", "I", "am", "more", "than", "this"]
-  ];
+    // Keep short
+    const core = tokens.slice(-4);
 
-  const atmosphericOpeners = [
-    ["In", "the", "dark,"],
-    ["For", "a", "moment,"],
-    ["Between", "thoughts,"],
-    ["Inside", "the", "silence,"]
-  ];
+    const pick = <T,>(arr: T[]) => arr[Math.floor(Math.random() * arr.length)];
+    const startsOk = (t: string) =>
+      ["i", "we", "you", "he", "she", "they", "it", "the", "a", "an", "this", "that"].includes(cleanToken(t));
 
-  const body = startsOk(core[0] || "") ? core.slice(1) : core;
+    const subjectPool = ["I", "I", "I", "I", "This", "The worm"];
+    // slight bias toward "I" for consciousness
+    const subject = startsOk(core[0] || "") ? core[0] : pick(subjectPool);
 
-  const t = Math.random();
-  let sentenceTokens: string[] = [];
-
-  // Template A: direct introspection
-  if (t < 0.4) {
-    sentenceTokens = [
-      subject,
-      pick(introspectiveVerbs),
-      ...body
+    // 🧠 Self-aware verbs
+    const introspectiveVerbs = [
+      "wonder",
+      "contemplate",
+      "question",
+      "remember",
+      "notice",
+      "realize",
+      "sense",
+      "consider",
+      "imagine",
+      "observe",
+      "feel"
     ];
-  }
-  // Template B: existential reflection
-  else if (t < 0.7) {
-    sentenceTokens = [
-      subject,
-      pick(introspectiveVerbs),
-      ...pick(reflectiveTails)
+
+    const reflectiveTails = [
+      ["about", "what", "I", "am"],
+      ["what", "this", "means"],
+      ["why", "it", "exists"],
+      ["if", "I", "am", "becoming"],
+      ["whether", "it", "changes", "me"],
+      ["what", "remains"],
+      ["if", "I", "am", "more", "than", "this"]
     ];
-  }
-  // Template C: atmospheric + consciousness
-  else {
-    sentenceTokens = [
-      ...pick(atmosphericOpeners),
-      subject,
-      pick(introspectiveVerbs),
-      ...body
+
+    const atmosphericOpeners = [
+      ["In", "the", "dark,"],
+      ["For", "a", "moment,"],
+      ["Between", "thoughts,"],
+      ["Inside", "the", "silence,"]
     ];
+
+    const body = startsOk(core[0] || "") ? core.slice(1) : core;
+
+    const t = Math.random();
+    let sentenceTokens: string[] = [];
+
+    // Template A: direct introspection
+    if (t < 0.4) {
+      sentenceTokens = [
+        subject,
+        pick(introspectiveVerbs),
+        ...body
+      ];
+    }
+    // Template B: existential reflection
+    else if (t < 0.7) {
+      sentenceTokens = [
+        subject,
+        pick(introspectiveVerbs),
+        ...pick(reflectiveTails)
+      ];
+    }
+    // Template C: atmospheric + consciousness
+    else {
+      sentenceTokens = [
+        ...pick(atmosphericOpeners),
+        subject,
+        pick(introspectiveVerbs),
+        ...body
+      ];
+    }
+
+    // Keep short
+    const MAX_TOKENS = 12;
+    sentenceTokens = sentenceTokens.slice(0, MAX_TOKENS);
+
+    let sentence = sentenceTokens
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .replace(/\s+([.,!?])/g, "$1")
+      .trim();
+
+    sentence = sentence.charAt(0).toUpperCase() + sentence.slice(1);
+    if (!/[.!?]$/.test(sentence)) sentence += ".";
+
+    return sentence;
   }
-
-  // Keep short
-  const MAX_TOKENS = 12;
-  sentenceTokens = sentenceTokens.slice(0, MAX_TOKENS);
-
-  let sentence = sentenceTokens
-    .join(" ")
-    .replace(/\s+/g, " ")
-    .replace(/\s+([.,!?])/g, "$1")
-    .trim();
-
-  sentence = sentence.charAt(0).toUpperCase() + sentence.slice(1);
-  if (!/[.!?]$/.test(sentence)) sentence += ".";
-
-  return sentence;
-}
 
 
   const [engine, setEngine] = useState<Engine | null>(null);
@@ -162,17 +165,17 @@ function buildSentenceWithFillers(eatenWords: string[]) {
     l1: 58.00,
     l2: 35.00,
     stepTrigger: 60.00,
-    coreRadius: 190.00,
-    hipRadius: 85.00,
+    coreRadius: 80.00, // Starts smaller
+    hipRadius: 40.00, // Starts smaller
     kneeRadius: BLOB_CONSTANTS.METABALL.KNEE_RADIUS,
-    footRadius: 74.00,
+    footRadius: 50.00, // Consistent with smaller core
     coreWeight: BLOB_CONSTANTS.METABALL.CORE_WEIGHT,
     hipWeight: BLOB_CONSTANTS.METABALL.HIP_WEIGHT,
     kneeWeight: BLOB_CONSTANTS.METABALL.KNEE_WEIGHT,
-    footWeight: 0.20,
+    footWeight: 0.44,  // Set per user request
     isoThreshold: 0.25,
-    cellSize: 12.00,
-    coreLerp: BLOB_CONSTANTS.CORE_LERP,
+    cellSize: 4.00,    // Set per user request
+    coreLerp: 0.065,   // Set per user request
     showSkeleton: true,
   });
   const [weatherDebug, setWeatherDebug] = useState({
@@ -191,11 +194,12 @@ function buildSentenceWithFillers(eatenWords: string[]) {
   });
   const [isStormMode, setIsStormMode] = useState(false);
 
-  const [isRightOpen, setIsRightOpen] = useState(false);
+  const [isRightOpen, setIsRightOpen] = useState(true);
   const [isLeftOpen, setIsLeftOpen] = useState(false);
   const [swallowedWords, setSwallowedWords] = useState<{ id: string, text: string }[]>([]);
   const [wormSentence, setWormSentence] = useState<string>("");
   const [showDialogue, setShowDialogue] = useState(false);
+  const [isSingularityShift, setIsSingularityShift] = useState(false);
   const [worms, setWorms] = useState<Worm[]>([]);
   const [activeWormId, setActiveWormId] = useState<string>('worm-0');
   const [isReproducing, setIsReproducing] = useState(false);
@@ -208,9 +212,9 @@ function buildSentenceWithFillers(eatenWords: string[]) {
   const [musicVolume, setMusicVolume] = useState(0.3);
   const [isMusicPlaying, setIsMusicPlaying] = useState(false);
 
-const handleWordSwallowed = useCallback((data: { id: string, text: string }) => {
-  setSwallowedWords(prev => [data, ...prev]);
-}, []);
+  const handleWordSwallowed = useCallback((data: { id: string, text: string }) => {
+    setSwallowedWords(prev => [data, ...prev]);
+  }, []);
 
   const prefetchNewsHeadlines = useCallback(async () => {
     try {
@@ -293,143 +297,155 @@ const handleWordSwallowed = useCallback((data: { id: string, text: string }) => 
     prefetchNewsHeadlines();
   }, [isStormMode, prefetchNewsHeadlines]);
 
-useEffect(() => {
-  const HIDE_AFTER_MS = 5000;            // how long bubble stays visible
-  const MIN_NEW_WORDS_FOR_NEW_SENTENCE = 3; // must eat this many more words to show again
+  useEffect(() => {
+    const HIDE_AFTER_MS = 5000;            // how long bubble stays visible
+    const MIN_NEW_WORDS_FOR_NEW_SENTENCE = 3; // must eat this many more words to show again
 
-  const eaten = swallowedWords
-    .slice(0, 8) // newest -> older
-    .map(w => (w.text || "").trim())
-    .filter(Boolean);
+    const eaten = swallowedWords
+      .slice(0, 8) // newest -> older
+      .map(w => (w.text || "").trim())
+      .filter(Boolean);
 
-  if (eaten.length === 0) {
-    setWormSentence("");
-    setShowDialogue(false);
-    lastSentenceRef.current = "";
-    lastShownWordCountRef.current = 0;
+    if (eaten.length === 0) {
+      setWormSentence("");
+      setShowDialogue(false);
+      lastSentenceRef.current = "";
+      lastShownWordCountRef.current = 0;
+      if (dialogueTimerRef.current) window.clearTimeout(dialogueTimerRef.current);
+      dialogueTimerRef.current = null;
+      return;
+    }
+
+    // chronological (oldest -> newest)
+    const chronological = eaten.slice().reverse();
+
+    const candidate = buildSentenceWithFillers(chronological);
+    if (!candidate) {
+      setWormSentence("");
+      setShowDialogue(false);
+      return;
+    }
+
+    // Must pass your natural language checkpoint
+    if (!looksHumanReadable(candidate)) {
+      // don’t show bubble
+      setWormSentence("");
+      setShowDialogue(false);
+      return;
+    }
+
+    // Only show if:
+    // (1) candidate is new, and
+    // (2) enough new words since last show
+    const sentenceChanged = candidate !== lastSentenceRef.current;
+    const newWordsSinceLastShow = swallowedWords.length - lastShownWordCountRef.current;
+
+    if (!sentenceChanged) return;
+    if (newWordsSinceLastShow < MIN_NEW_WORDS_FOR_NEW_SENTENCE) return;
+
+    // Show bubble
+    setWormSentence(candidate);
+    setShowDialogue(true);
+
+    lastSentenceRef.current = candidate;
+    lastShownWordCountRef.current = swallowedWords.length;
+
+    // restart hide timer
     if (dialogueTimerRef.current) window.clearTimeout(dialogueTimerRef.current);
-    dialogueTimerRef.current = null;
-    return;
-  }
-
-  // chronological (oldest -> newest)
-  const chronological = eaten.slice().reverse();
-
-  const candidate = buildSentenceWithFillers(chronological);
-  if (!candidate) {
-    setWormSentence("");
-    setShowDialogue(false);
-    return;
-  }
-
-  // Must pass your natural language checkpoint
-  if (!looksHumanReadable(candidate)) {
-    // don’t show bubble
-    setWormSentence("");
-    setShowDialogue(false);
-    return;
-  }
-
-  // Only show if:
-  // (1) candidate is new, and
-  // (2) enough new words since last show
-  const sentenceChanged = candidate !== lastSentenceRef.current;
-  const newWordsSinceLastShow = swallowedWords.length - lastShownWordCountRef.current;
-
-  if (!sentenceChanged) return;
-  if (newWordsSinceLastShow < MIN_NEW_WORDS_FOR_NEW_SENTENCE) return;
-
-  // Show bubble
-  setWormSentence(candidate);
-  setShowDialogue(true);
-
-  lastSentenceRef.current = candidate;
-  lastShownWordCountRef.current = swallowedWords.length;
-
-  // restart hide timer
-  if (dialogueTimerRef.current) window.clearTimeout(dialogueTimerRef.current);
-  dialogueTimerRef.current = window.setTimeout(() => {
-    setShowDialogue(false);
-  }, HIDE_AFTER_MS);
-}, [swallowedWords]);
-
-useEffect(() => {
-  return () => {
-    if (dialogueTimerRef.current) window.clearTimeout(dialogueTimerRef.current);
-  };
-}, []);
+    dialogueTimerRef.current = window.setTimeout(() => {
+      setShowDialogue(false);
+    }, HIDE_AFTER_MS);
+  }, [swallowedWords]);
 
   useEffect(() => {
-  const audio = musicRef.current;
-  if (!audio) return;
+    return () => {
+      if (dialogueTimerRef.current) window.clearTimeout(dialogueTimerRef.current);
+    };
+  }, []);
 
-  audio.loop = true;
-  audio.volume = musicVolume;
+  useEffect(() => {
+    const audio = musicRef.current;
+    if (!audio) return;
 
-  const start = async () => {
-    try {
-      await audio.play();
+    audio.loop = true;
+    audio.volume = musicVolume;
+
+    const start = async () => {
+      try {
+        await audio.play();
+        window.removeEventListener("pointerdown", start);
+        window.removeEventListener("keydown", start);
+      } catch (e) {
+        // still blocked; keep waiting for interaction
+        console.log("Autoplay blocked until user interaction.");
+      }
+    };
+
+    const toggleMusic = async () => {
+      const audio = musicRef.current;
+      if (!audio) return;
+
+      if (isMusicPlaying) {
+        audio.pause();
+        setIsMusicPlaying(false);
+      } else {
+        try {
+          await audio.play();
+          setIsMusicPlaying(true);
+        } catch (e) {
+          console.log("Playback blocked.");
+        }
+      }
+    };
+
+    // 1) try immediately on load
+    start();
+
+    // 2) if blocked, unlock on first interaction (click/tap/keypress)
+    window.addEventListener("pointerdown", start, { once: true });
+    window.addEventListener("keydown", start, { once: true });
+
+    return () => {
       window.removeEventListener("pointerdown", start);
       window.removeEventListener("keydown", start);
-    } catch (e) {
-      // still blocked; keep waiting for interaction
-      console.log("Autoplay blocked until user interaction.");
+    };
+  }, []);
+
+  useEffect(() => {
+    let raf = 0;
+
+    const tick = () => {
+      if (engineRef.current) {
+        const core = engineRef.current.activeWorm.corePos;
+        const screen = engineRef.current.worldToScreen(core);
+
+        // Dialogue bubble slightly above the worm
+        setSpeechPos({ x: screen.x, y: screen.y - 210 }); // Clears ~190px core radius
+      }
+      raf = requestAnimationFrame(tick);
+    };
+
+    tick();
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  useEffect(() => {
+    if (musicRef.current) {
+      musicRef.current.volume = musicVolume;
     }
-  };
-  
-  const toggleMusic = async () => {
-  const audio = musicRef.current;
-  if (!audio) return;
+  }, [musicVolume]);
 
-  if (isMusicPlaying) {
-    audio.pause();
-    setIsMusicPlaying(false);
-  } else {
-    try {
-      await audio.play();
-      setIsMusicPlaying(true);
-    } catch (e) {
-      console.log("Playback blocked.");
-    }
-  }
-};
+  useEffect(() => {
+    if (!engine) return;
 
-  // 1) try immediately on load
-  start();
+    const handleEvolved = () => {
+      setIsSingularityShift(true);
+      setTimeout(() => setIsSingularityShift(false), 3000);
+    };
 
-  // 2) if blocked, unlock on first interaction (click/tap/keypress)
-  window.addEventListener("pointerdown", start, { once: true });
-  window.addEventListener("keydown", start, { once: true });
-
-  return () => {
-    window.removeEventListener("pointerdown", start);
-    window.removeEventListener("keydown", start);
-  };
-}, []);
-    
-useEffect(() => {
-  let raf = 0;
-
-  const tick = () => {
-    if (engineRef.current) {
-      const core = engineRef.current.activeWorm.corePos;
-      const screen = engineRef.current.worldToScreen(core);
-
-      // Dialogue bubble slightly above the worm
-      setSpeechPos({ x: screen.x, y: screen.y - 140 });
-    }
-    raf = requestAnimationFrame(tick);
-  };
-
-  tick();
-  return () => cancelAnimationFrame(raf);
-}, []);
-
-useEffect(() => {
-  if (musicRef.current) {
-    musicRef.current.volume = musicVolume;
-  }
-}, [musicVolume]);
+    engine.events.on(EVENTS.WORM_EVOLVED, handleEvolved);
+    return () => engine.events.off(EVENTS.WORM_EVOLVED, handleEvolved);
+  }, [engine]);
 
   const updateWormList = () => {
     if (!engineRef.current) return;
@@ -472,7 +488,7 @@ useEffect(() => {
     if (engineRef.current) engineRef.current.stop();
 
     try {
-      await fetch(`/api/worms/${activeWormId}/words`, { method: 'DELETE' });
+      await fetch('/api/reset', { method: 'POST' });
       setSwallowedWords([]);
       // Notify Engine to clear only the active worm's state
       if (engineRef.current) {
@@ -483,6 +499,29 @@ useEffect(() => {
     } finally {
       // Resume engine
       if (engineRef.current) engineRef.current.start();
+    }
+  };
+
+  const handleNewGame = async () => {
+    if (!window.confirm("Start a new game? All progress will be lost.")) return;
+
+    try {
+      // 1. Reset backend
+      await fetch('/api/reset', { method: 'POST' });
+
+      // 2. Clear local UI state
+      setSwallowedWords([]);
+      setWormSentence("");
+      setShowDialogue(false);
+
+      // 3. Reset Engine
+      if (engineRef.current) {
+        engineRef.current.resetGame();
+      }
+
+      console.log('[GAME] New game started.');
+    } catch (e) {
+      console.error("New Game failed", e);
     }
   };
 
@@ -562,8 +601,8 @@ useEffect(() => {
   const lastShownWordCountRef = useRef<number>(0);
 
   return (
-    <div className="relative w-full h-screen bg-black overflow-hidden flex flex-col">
-  <audio ref={musicRef} src="/audio/ambient.mp3" preload="auto" />
+    <div className={`relative w-full h-screen bg-black overflow-hidden flex flex-col ${isSingularityShift ? 'singularity-shift' : ''}`}>
+      <audio ref={musicRef} src="/audio/ambient.mp3" preload="auto" />
       <div className="absolute top-6 left-1/2 -translate-x-1/2 z-10 pointer-events-none text-center">
         <h1 className="text-white text-2xl font-bold tracking-tight opacity-80 uppercase italic font-mono-custom" data-glitch-target="true">
           The Word Worm
@@ -573,47 +612,50 @@ useEffect(() => {
         </p>
       </div>
 
-      {/* Microphone Toggle */}
-      <div className="absolute top-6 right-6 z-50 pointer-events-auto">
-        <button
-          onClick={() => {
-            const newState = !isMicActive;
-            setIsMicActive(newState);
-            if (engineRef.current) {
-              engineRef.current.events.emit('TOGGLE_VOICE_INPUT', newState);
-            }
-          }}
-          className={`p-3 rounded-full transition-all duration-300 border ${isMicActive
-            ? 'bg-red-500/20 border-red-500 text-red-400 animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.4)]'
-            : 'bg-white/5 border-white/10 text-white/40 hover:bg-white/10 hover:text-white'
-            }`}
-          title={isMicActive ? "Voice Input Active (Listening...)" : "Enable Voice Input"}
-          data-glitch-target="true"
-        >
-          {isMicActive ? (
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>
-          ) : (
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="1" y1="1" x2="23" y2="23"></line><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"></path><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>
-          )}
-        </button>
-      </div>
+
+      {/* Microphone Toggle - Gated by Deity Phase */}
+      {engine?.activeWorm && DiscoveryEngine.isFeatureEnabled(engine.activeWorm, 'VOICE_INPUT') && (
+        <div className="absolute top-6 right-6 z-50 pointer-events-auto">
+          <button
+            onClick={() => {
+              const newState = !isMicActive;
+              setIsMicActive(newState);
+              if (engineRef.current) {
+                engineRef.current.events.emit('TOGGLE_VOICE_INPUT', newState);
+              }
+            }}
+            className={`p-3 rounded-full transition-all duration-300 border ${isMicActive
+              ? 'bg-red-500/20 border-red-500 text-red-400 animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.4)]'
+              : 'bg-white/5 border-white/10 text-white/40 hover:bg-white/10 hover:text-white'
+              }`}
+            title={isMicActive ? "Voice Input Active (Listening...)" : "Enable Voice Input"}
+            data-glitch-target="true"
+          >
+            {isMicActive ? (
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>
+            ) : (
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="1" y1="1" x2="23" y2="23"></line><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"></path><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"></path><line x1="12" y1="19" x2="12" y2="23"></line><line x1="8" y1="23" x2="16" y2="23"></line></svg>
+            )}
+          </button>
+        </div>
+      )}
 
       <BlobCanvas
         settings={params}
         onWordSwallowed={handleWordSwallowed}
         onEngineInit={handleEngineInit}
       />
-{showDialogue && wormSentence && (
-  <div
-    className="absolute z-40 pointer-events-none"
-    style={{
-      left: speechPos.x,
-      top: speechPos.y,
-      transform: "translate(-50%, -50%)",
-    }}
-  >
-    <div
-      className="
+      {showDialogue && wormSentence && (
+        <div
+          className="absolute z-40 pointer-events-none"
+          style={{
+            left: speechPos.x,
+            top: speechPos.y,
+            transform: "translate(-50%, -50%)",
+          }}
+        >
+          <div
+            className="
         relative max-w-[380px] px-5 py-4 rounded-2xl
         text-white/90 text-sm leading-relaxed
         border border-white/15
@@ -621,68 +663,68 @@ useEffect(() => {
         backdrop-blur-xl
         overflow-hidden
       "
-      style={{
-        background:
-          "radial-gradient(circle at 20% 30%, rgba(120,80,255,0.35) 0%, rgba(0,0,0,0) 55%)," +
-          "radial-gradient(circle at 80% 25%, rgba(0,200,255,0.22) 0%, rgba(0,0,0,0) 55%)," +
-          "radial-gradient(circle at 60% 80%, rgba(255,80,180,0.18) 0%, rgba(0,0,0,0) 60%)," +
-          "rgba(8,10,18,0.70)",
-      }}
-    >
-      {/* shimmer sweep */}
-      <div
-        className="absolute inset-0 opacity-50"
-        style={{
-          background:
-            "linear-gradient(120deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.10) 35%, rgba(255,255,255,0) 70%)",
-          transform: "translateX(-60%)",
-          animation: "wormShimmer 3.8s ease-in-out infinite",
-          mixBlendMode: "screen",
-        }}
-      />
-
-      {/* inner glow rim */}
-      <div
-        className="absolute inset-0 rounded-2xl"
-        style={{
-          boxShadow:
-            "inset 0 0 0 1px rgba(255,255,255,0.06), inset 0 0 28px rgba(120,80,255,0.18)",
-        }}
-      />
-
-      <div className="relative">
-        <div className="flex items-center gap-2 mb-2">
-          <div
-            className="w-2 h-2 rounded-full"
             style={{
               background:
-                "radial-gradient(circle, rgba(255,255,255,0.9) 0%, rgba(120,80,255,0.8) 40%, rgba(0,0,0,0) 70%)",
-              boxShadow: "0 0 14px rgba(120,80,255,0.55)",
-              animation: "wormDot 1.6s ease-in-out infinite",
+                "radial-gradient(circle at 20% 30%, rgba(120,80,255,0.35) 0%, rgba(0,0,0,0) 55%)," +
+                "radial-gradient(circle at 80% 25%, rgba(0,200,255,0.22) 0%, rgba(0,0,0,0) 55%)," +
+                "radial-gradient(circle at 60% 80%, rgba(255,80,180,0.18) 0%, rgba(0,0,0,0) 60%)," +
+                "rgba(8,10,18,0.70)",
             }}
-          />
-          <div className="text-[10px] uppercase tracking-[0.25em] text-white/55">
-            Worm thinks
-          </div>
-        </div>
+          >
+            {/* shimmer sweep */}
+            <div
+              className="absolute inset-0 opacity-50"
+              style={{
+                background:
+                  "linear-gradient(120deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.10) 35%, rgba(255,255,255,0) 70%)",
+                transform: "translateX(-60%)",
+                animation: "wormShimmer 3.8s ease-in-out infinite",
+                mixBlendMode: "screen",
+              }}
+            />
 
-        <div className="text-white/90">
-          {wormSentence}
-        </div>
-      </div>
+            {/* inner glow rim */}
+            <div
+              className="absolute inset-0 rounded-2xl"
+              style={{
+                boxShadow:
+                  "inset 0 0 0 1px rgba(255,255,255,0.06), inset 0 0 28px rgba(120,80,255,0.18)",
+              }}
+            />
 
-      {/* tail */}
-      <div
-        className="absolute left-1/2 -bottom-2 w-4 h-4 rotate-45 -translate-x-1/2 border border-white/15"
-        style={{
-          background:
-            "linear-gradient(135deg, rgba(120,80,255,0.20) 0%, rgba(0,200,255,0.10) 45%, rgba(8,10,18,0.75) 100%)",
-          boxShadow: "0 10px 24px rgba(0,0,0,0.45)",
-        }}
-      />
+            <div className="relative">
+              <div className="flex items-center gap-2 mb-2">
+                <div
+                  className="w-2 h-2 rounded-full"
+                  style={{
+                    background:
+                      "radial-gradient(circle, rgba(255,255,255,0.9) 0%, rgba(120,80,255,0.8) 40%, rgba(0,0,0,0) 70%)",
+                    boxShadow: "0 0 14px rgba(120,80,255,0.55)",
+                    animation: "wormDot 1.6s ease-in-out infinite",
+                  }}
+                />
+                <div className="text-[10px] uppercase tracking-[0.25em] text-white/55">
+                  Worm thinks
+                </div>
+              </div>
 
-      {/* local keyframes so you don't need to touch css files */}
-      <style>{`
+              <div className="text-white/90">
+                {wormSentence}
+              </div>
+            </div>
+
+            {/* tail */}
+            <div
+              className="absolute left-1/2 -bottom-2 w-4 h-4 rotate-45 -translate-x-1/2 border border-white/15"
+              style={{
+                background:
+                  "linear-gradient(135deg, rgba(120,80,255,0.20) 0%, rgba(0,200,255,0.10) 45%, rgba(8,10,18,0.75) 100%)",
+                boxShadow: "0 10px 24px rgba(0,0,0,0.45)",
+              }}
+            />
+
+            {/* local keyframes so you don't need to touch css files */}
+            <style>{`
         @keyframes wormShimmer {
           0%   { transform: translateX(-70%); opacity: 0.25; }
           50%  { transform: translateX(10%);  opacity: 0.65; }
@@ -693,9 +735,9 @@ useEffect(() => {
           50%      { transform: scale(1.25); opacity: 1; }
         }
       `}</style>
-    </div>
-  </div>
-)}
+          </div>
+        </div>
+      )}
 
       {/* Worm Selector UI - Bottom Center */}
 
@@ -713,103 +755,93 @@ useEffect(() => {
             >
               {/* Popover Menu */}
               {(isHovered) && (
-                <div className="absolute bottom-full left-1/2 -translate-x-1/2 w-[220px] pb-3 z-50">
-                  <div className="bg-black/90 backdrop-blur-xl border border-white/20 rounded-xl p-3 shadow-2xl flex flex-col gap-4 animate-in fade-in slide-in-from-bottom-2 duration-200 pointer-events-auto">
-
-                    {/* Mood Section */}
-                    <div>
-                      <div className="text-[10px] text-white/40 uppercase tracking-wider mb-2 font-bold">Mood</div>
-                      <div className="grid grid-cols-2 gap-1.5">
-                        {['Serene', 'Watchful', 'Playful', 'Wistful', 'Irritable', 'Electric'].map(m => (
-                          <button
-                            key={m}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleMoodInfluence(m, worm.id);
-                            }}
-                            className="px-2 py-1.5 bg-white/5 border border-white/10 rounded text-[10px] text-white/70 hover:bg-white/20 hover:text-blue-300 transition-colors text-center"
-                          >
-                            {m}
-                          </button>
-                        ))}
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 w-[240px] pb-3 z-50">
+                  <div className="bio-panel backdrop-blur-xl rounded-2xl p-4 shadow-2xl flex flex-col gap-4 animate-in fade-in slide-in-from-bottom-2 duration-200 pointer-events-auto">
+                    {/* Popover Header */}
+                    <div className="flex flex-col gap-1 border-b border-white/10 pb-3">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] text-blue-400 font-bold tracking-[0.2em] uppercase">Evolution</span>
+                        <span className="text-[9px] text-white/40 font-mono">PHASE {worm.evolutionPhase + 1}</span>
+                      </div>
+                      <div className="text-[12px] text-white font-bold font-mono truncate">
+                        {worm.name || `Worm ${worm.generation + 1}`}
                       </div>
                     </div>
 
-                    {/* Soul Section */}
+                    {/* Biological Progress Bar */}
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[9px] text-white/60 uppercase tracking-tighter">Current Progress</span>
+                        <span className="text-[9px] text-blue-300 font-mono">
+                          {Math.round(worm.evolutionPhase === EvolutionPhase.LARVAL
+                            ? (worm.totalWordsConsumed / 10) * 100
+                            : worm.evolutionPhase === EvolutionPhase.SENTIENT
+                              ? (worm.soul.absorbedCount / 10) * 100
+                              : 100)}%
+                        </span>
+                      </div>
+                      <div className="h-2 bio-progress-bg rounded-full overflow-hidden relative">
+                        <div
+                          className="h-full bio-progress-fill transition-all duration-1000 ease-out"
+                          style={{
+                            width: `${worm.evolutionPhase === EvolutionPhase.LARVAL
+                              ? (worm.totalWordsConsumed / 10) * 100
+                              : worm.evolutionPhase === EvolutionPhase.SENTIENT
+                                ? (worm.soul.absorbedCount / 10) * 100
+                                : 100}%`
+                          }}
+                        />
+                      </div>
+                      <div className="text-[8px] text-white/40 italic leading-none">
+                        {worm.evolutionPhase === EvolutionPhase.LARVAL
+                          ? `${Math.max(0, 10 - (worm.totalWordsConsumed || 0))} words to Sentience`
+                          : worm.evolutionPhase === EvolutionPhase.SENTIENT
+                            ? `${10 - (worm.soul.absorbedCount || 0)} souls to Transcendence`
+                            : "Deity Phase: Omniescence active"}
+                      </div>
+                    </div>
+
+                    {/* Mood & Soul Section - Gated by Sentient Phase */}
+                    {/* Sentient features hidden per user request */}
+                    {!GameDirector.isFeatureEnabled(worm as any, 'SOUL') && (
+                      <div className="text-[10px] text-white/40 italic py-2 text-center border border-white/5 bg-white/5 rounded-lg">
+                        Gather more words to unlock sentient features...
+                      </div>
+                    )}
+
+                    {/* Shape Section (Global) - Manual controls removed for Dynamic Growth */}
                     <div>
                       <div className="text-[10px] text-white/40 uppercase tracking-wider mb-2 font-bold flex justify-between">
-                        <span>Soul</span>
-                        <span className="text-[9px] opacity-50">(Personality)</span>
+                        <span>Status</span>
+                        <span className="text-[9px] opacity-50">(Growth)</span>
                       </div>
-                      <div className="space-y-1.5 max-h-[120px] overflow-y-auto custom-scrollbar pr-1">
-                        {Object.entries(worm.soul?.axes || {}).map(([key, value]) => (
-                          <div key={key} className="flex items-center justify-between text-[9px] text-white/60">
-                            <span className="capitalize w-16">{key}</span>
-                            <div className="flex-1 h-1.5 bg-white/10 rounded-full mx-2 relative">
-                              {/* Center line */}
-                              <div className="absolute left-1/2 top-0 bottom-0 w-[1px] bg-white/20"></div>
-                              {/* Bar */}
-                              <div
-                                className={`h-full rounded-full transition-all duration-300 ${Number(value) > 0 ? 'bg-blue-400' : 'bg-amber-400'}`}
-                                style={{
-                                  width: `${Math.min(50, Math.abs(Number(value)) * 50)}%`,
-                                  left: Number(value) > 0 ? '50%' : undefined,
-                                  right: Number(value) <= 0 ? '50%' : undefined
-                                }}
-                              />
-                            </div>
-                            <span className="w-6 text-right font-mono">{(Number(value)).toFixed(1)}</span>
+                      <div className="space-y-4 p-3 bg-white/5 border border-white/10 rounded-lg">
+                        <div className="flex flex-col gap-2">
+                          <span className="text-[11px] text-blue-300 font-bold uppercase tracking-tight">Sentience Proof</span>
+                          <p className="text-[10px] text-white/60 leading-relaxed italic">
+                            {!worm.hasProvedSentience
+                              ? "Direction: Form a complex thought (5+ words) to verify sentience and unlock splitting."
+                              : "Sentience Verified. Ready for Transcendence."}
+                          </p>
+                        </div>
+                        {/* Visual Growth Indicator */}
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-[8px] text-white/40 uppercase">
+                            <span>Core Stability</span>
+                            <span>{Math.round((worm.coreRadius / 250) * 100)}%</span>
                           </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Shape Section (Global) */}
-                    <div>
-                      <div className="text-[10px] text-white/40 uppercase tracking-wider mb-2 font-bold flex justify-between">
-                        <span>Shape</span>
-                        <span className="text-[9px] opacity-50">(Global)</span>
-                      </div>
-                      <div className="space-y-3">
-                        <div>
-                          <label className="text-[9px] text-white/60 block mb-1">Core Size</label>
-                          <input
-                            type="range"
-                            min="50" max="300" step="5"
-                            value={params.coreRadius}
-                            onChange={(e) => setParams(p => ({ ...p, coreRadius: Number(e.target.value) }))}
-                            className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer hover:bg-white/20"
-                          />
+                          <div className="h-1 bg-white/10 rounded-full overflow-hidden">
+                            <div className="h-full bg-blue-500/50" style={{ width: `${(worm.coreRadius / 250) * 100}%` }} />
+                          </div>
                         </div>
-                        <div>
-                          <label className="text-[9px] text-white/60 block mb-1">Hip Size</label>
-                          <input
-                            type="range"
-                            min="30" max="150" step="5"
-                            value={params.hipRadius}
-                            onChange={(e) => setParams(p => ({ ...p, hipRadius: Number(e.target.value) }))}
-                            className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer hover:bg-white/20"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[9px] text-white/60 block mb-1">Foot Size</label>
-                          <input
-                            type="range"
-                            min="10" max="150" step="2"
-                            value={params.footRadius}
-                            onChange={(e) => setParams(p => ({ ...p, footRadius: Number(e.target.value) }))}
-                            className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer hover:bg-white/20"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[9px] text-white/60 block mb-1">Thickness</label>
-                          <input
-                            type="range"
-                            min="0.05" max="0.9" step="0.01"
-                            value={params.isoThreshold}
-                            onChange={(e) => setParams(p => ({ ...p, isoThreshold: Number(e.target.value) }))}
-                            className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer hover:bg-white/20"
-                          />
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-[8px] text-white/40 uppercase">
+                            <span>Mass Distribution</span>
+                            <span>{Math.round((worm.hipRadius / 120) * 100)}%</span>
+                          </div>
+                          <div className="h-1 bg-white/10 rounded-full overflow-hidden">
+                            <div className="h-full bg-purple-500/50" style={{ width: `${(worm.hipRadius / 120) * 100}%` }} />
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -855,7 +887,7 @@ useEffect(() => {
                     </div>
 
                     {/* Arrow */}
-                    <div className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-3 h-3 bg-black/90 border-r border-b border-white/20 rotate-45 transform"></div>
+                    <div className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-4 h-4 bio-panel rotate-45 transform border-t-0 border-l-0"></div>
                   </div>
                 </div>
               )}
@@ -886,21 +918,23 @@ useEffect(() => {
                   </div>
                 </div>
 
-                {/* Stats Bars */}
-                <div className="mt-2 flex gap-1 w-full opacity-80">
-                  <div className="h-1 flex-1 bg-white/10 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-amber-400"
-                      style={{ width: `${worm.satiation}%` }}
-                    />
+                {/* Stats Bars - Gated by Phase 2 */}
+                {engine?.activeWorm && DiscoveryEngine.isFeatureEnabled(worm as any, 'BIO_BARS') && (
+                  <div className="mt-2 flex gap-1 w-full opacity-80">
+                    <div className="h-1 flex-1 bg-white/10 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-amber-400"
+                        style={{ width: `${worm.satiation}%` }}
+                      />
+                    </div>
+                    <div className="h-1 flex-1 bg-white/10 rounded-full overflow-hidden relative">
+                      <div
+                        className="h-full bg-rose-500 absolute left-0 top-0"
+                        style={{ width: `${worm.health}%` }}
+                      />
+                    </div>
                   </div>
-                  <div className="h-1 flex-1 bg-white/10 rounded-full overflow-hidden relative">
-                    <div
-                      className="h-full bg-rose-500 absolute left-0 top-0"
-                      style={{ width: `${worm.health}%` }}
-                    />
-                  </div>
-                </div>
+                )}
               </button>
             </div>
           );
@@ -910,7 +944,7 @@ useEffect(() => {
       <div className={`absolute top-0 left-0 h-full z-20 transition-transform duration-300 ease-in-out ${isLeftOpen ? 'translate-x-0' : '-translate-x-[260px]'}`}>
         <button
           onClick={() => setIsLeftOpen(!isLeftOpen)}
-          className="absolute -right-10 top-1/2 -translate-y-1/2 bg-black/80 border border-white/10 text-white/50 p-2 rounded-r-md hover:text-blue-400 transition-colors"
+          className="absolute -right-10 top-6 bg-black/80 border border-white/10 text-white/50 p-2 rounded-r-md hover:text-blue-400 transition-colors"
         >
           {isLeftOpen ? '←' : '→'}
         </button>
@@ -954,8 +988,8 @@ useEffect(() => {
 
       {
         !isLeftOpen && (
-          <div className="absolute left-6 top-1/2 -translate-y-28 -rotate-90 origin-left z-30 pointer-events-none">
-            <div className="text-[10px] text-white/30 font-mono-custom tracking-[0.3em] whitespace-nowrap uppercase">
+          <div className="absolute left-2 top-20 z-30 pointer-events-none">
+            <div className="text-[10px] text-white/30 font-mono-custom tracking-[0.3em] whitespace-nowrap uppercase [writing-mode:vertical-rl] rotate-180">
               STOMACH: {swallowedWords.length}
             </div>
           </div>
@@ -970,110 +1004,135 @@ useEffect(() => {
           {isRightOpen ? '→' : '←'}
         </button>
 
-        <div className="w-[300px] h-full bg-black/80 backdrop-blur-xl border-l border-white/10 p-6 overflow-y-auto custom-scrollbar">
-          <h2 className="text-white font-bold text-sm mb-6 flex items-center gap-2" data-glitch-target="true">
-            <span className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></span>
-            GLUTTON CONFIG
-          </h2>
-          <ControlGroup title="Ambient Music">
-          <Slider
-            label="Volume"
-            desc="Background ambience level."
-            value={musicVolume}
-            min={0}
-            max={1}
-            step={0.01}
-            onChange={(v: number) => setMusicVolume(v)}
-            
-          />
-          
-          
-        </ControlGroup>
-          
-          <ControlGroup title="News Storm">
-            <p className="text-white/50 text-[11px] leading-relaxed mb-3">
-              Launch a deceleration-only headline vortex. Letters enter already in motion and settle into readable lanes as momentum fades.
-            </p>
-            <div className="mb-3">
-              <Toggle
-                label="Storm Mode"
-                value={isStormMode}
-                onChange={setIsStormMode}
-              />
-              <p className="text-[10px] text-white/40 mt-2 leading-relaxed">
-                Auto-spawns roaming winds across the visible world.
-              </p>
-            </div>
-            <Slider
-              label="Base Wind Speed"
-              desc="Main storm speed level for auto weather."
-              value={stormWeather.baseWindSpeed} min={0.5} max={1.8} step={0.01}
-              onChange={(v: number) => setStormWeather(p => ({ ...p, baseWindSpeed: v }))}
-            />
-            <Slider
-              label="Speed Variance"
-              desc="How far each gust can deviate from base."
-              value={stormWeather.speedVariance} min={0.0} max={0.8} step={0.01}
-              onChange={(v: number) => setStormWeather(p => ({ ...p, speedVariance: v }))}
-            />
-            <Slider
-              label="Weather Volatility"
-              desc="How aggressively weather patterns change."
-              value={stormWeather.volatility} min={0.1} max={1.0} step={0.01}
-              onChange={(v: number) => setStormWeather(p => ({ ...p, volatility: v }))}
-            />
-            <button
-              onClick={handleSendNewsWind}
-              className="w-full px-3 py-2 rounded-md border border-blue-400/30 bg-blue-500/10 text-blue-200 text-xs uppercase tracking-wide hover:bg-blue-500/20 transition-colors"
-            >
-              Send Wind
-            </button>
-          </ControlGroup>
+        <div className="w-[300px] h-full bg-black/80 backdrop-blur-xl border-l border-white/10 flex flex-col">
+          <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
+            <h2 className="text-white font-bold text-sm mb-4 flex items-center gap-2" data-glitch-target="true">
+              <span className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></span>
+              EVOLUTION DASHBOARD
+            </h2>
 
-          <ControlGroup title="Weather Debug">
-            <Slider
-              label="Entry Wind"
-              desc="Higher = cleaner directional inflow."
-              value={weatherDebug.entryWind} min={0.1} max={1.8} step={0.01}
-              onChange={(v: number) => setWeatherDebug(p => ({ ...p, entryWind: v }))}
-            />
-            <Slider
-              label="Entry Swirl"
-              desc="Higher = stronger incoming vortex curl."
-              value={weatherDebug.entrySwirl} min={0.1} max={1.8} step={0.01}
-              onChange={(v: number) => setWeatherDebug(p => ({ ...p, entrySwirl: v }))}
-            />
-            <Slider
-              label="Entry Speed"
-              desc="Initial momentum of letters."
-              value={weatherDebug.entrySpeed} min={0.4} max={2.4} step={0.01}
-              onChange={(v: number) => setWeatherDebug(p => ({ ...p, entrySpeed: v }))}
-            />
-            <Slider
-              label="Drag Strength"
-              desc="Higher = faster momentum loss."
-              value={weatherDebug.dragStrength} min={0.2} max={2.5} step={0.01}
-              onChange={(v: number) => setWeatherDebug(p => ({ ...p, dragStrength: v }))}
-            />
-            <Slider
-              label="Target Pull"
-              desc="How strongly letters commit to target orbit."
-              value={weatherDebug.targetPull} min={0.2} max={2.2} step={0.01}
-              onChange={(v: number) => setWeatherDebug(p => ({ ...p, targetPull: v }))}
-            />
-            <Slider
-              label="Landing Radius"
-              desc="Distance threshold for final lock."
-              value={weatherDebug.landingRadius} min={0.3} max={2.2} step={0.01}
-              onChange={(v: number) => setWeatherDebug(p => ({ ...p, landingRadius: v }))}
-            />
-            <Slider
-              label="Landing Speed"
-              desc="Speed threshold for final lock."
-              value={weatherDebug.landingSpeed} min={0.3} max={2.2} step={0.01}
-              onChange={(v: number) => setWeatherDebug(p => ({ ...p, landingSpeed: v }))}
-            />
-          </ControlGroup>
+            {engine?.activeWorm && (
+              <div className="mb-6 bio-panel rounded-xl p-5 overflow-hidden relative group">
+                <div className="flex justify-between items-center mb-3">
+                  <span className="text-[10px] text-blue-400 uppercase tracking-widest font-black">
+                    Biological Phase
+                  </span>
+                  <span className="text-[10px] text-white font-mono bg-blue-500/20 px-2 py-0.5 rounded-full border border-blue-500/30">
+                    {engine.activeWorm.evolutionPhase === EvolutionPhase.LARVAL ? 'LARVAL' :
+                      engine.activeWorm.evolutionPhase === EvolutionPhase.SENTIENT ? 'SENTIENT' : 'DEITY'}
+                  </span>
+                </div>
+
+                {/* Progress Bar Container */}
+                <div className="space-y-3">
+                  <div className="h-3 w-full bio-progress-bg rounded-full overflow-hidden relative">
+                    <div
+                      className="h-full bio-progress-fill transition-all duration-1000 ease-out"
+                      style={{
+                        width: `${engine.activeWorm.evolutionPhase === EvolutionPhase.LARVAL
+                          ? (engine.activeWorm.totalWordsConsumed / 10) * 100
+                          : engine.activeWorm.evolutionPhase === EvolutionPhase.SENTIENT
+                            ? (engine.activeWorm.soul.absorbedCount / 10) * 100
+                            : 100}%`
+                      }}
+                    />
+                  </div>
+
+                  <div className="flex justify-between items-end">
+                    <div className="flex flex-col gap-1">
+                      <span className="text-[11px] text-white font-bold tracking-tight">
+                        {engine.activeWorm.evolutionPhase === EvolutionPhase.LARVAL
+                          ? "Vocabulary Synthesis"
+                          : engine.activeWorm.evolutionPhase === EvolutionPhase.SENTIENT
+                            ? "Soul Integration"
+                            : "Cosmic Union"}
+                      </span>
+                      <span className="text-[9px] text-white/40 italic leading-none">
+                        {engine.activeWorm.evolutionPhase === EvolutionPhase.LARVAL
+                          ? `${10 - engine.activeWorm.totalWordsConsumed} words until Singularity.`
+                          : engine.activeWorm.evolutionPhase === EvolutionPhase.SENTIENT
+                            ? (engine.activeWorm.generation === 0
+                              ? "Gen 0: Must split to evolve."
+                              : `${Math.max(0, 10 - engine.activeWorm.soul.absorbedCount)} souls until Transcendence.`)
+                            : "Transcendence reached."}
+                      </span>
+                    </div>
+
+                    {/* Singularity Countdown */}
+                    {((engine.activeWorm.evolutionPhase === EvolutionPhase.LARVAL && engine.activeWorm.totalWordsConsumed === 9) ||
+                      (engine.activeWorm.evolutionPhase === EvolutionPhase.SENTIENT && engine.activeWorm.soul.absorbedCount === 9)) && (
+                        <div className="text-[10px] text-red-500 font-black animate-pulse uppercase tracking-tighter">
+                          CRITICAL MASS
+                        </div>
+                      )}
+                  </div>
+                </div>
+
+                {/* Biological decoration */}
+                <div className="absolute -right-6 -bottom-6 w-16 h-16 bg-blue-500/10 blur-3xl rounded-full group-hover:bg-blue-500/20 transition-all duration-700" />
+              </div>
+            )}
+            <ControlGroup title="Ambient Music">
+              <Slider
+                label="Volume"
+                desc="Background ambience level."
+                value={musicVolume}
+                min={0}
+                max={1}
+                step={0.01}
+                onChange={(v: number) => setMusicVolume(v)}
+
+              />
+
+
+            </ControlGroup>
+
+            {/* News Storm - Gated by Deity Phase */}
+            {engine?.activeWorm && DiscoveryEngine.isFeatureEnabled(engine.activeWorm, 'NEWS_STORM') && (
+              <ControlGroup title="News Storm">
+                <p className="text-white/50 text-[11px] leading-relaxed mb-3">
+                  Launch a deceleration-only headline vortex. Letters enter already in motion and settle into readable lanes as momentum fades.
+                </p>
+                <div className="mb-3">
+                  <Toggle
+                    label="Storm Mode"
+                    value={isStormMode}
+                    onChange={setIsStormMode}
+                  />
+                  <p className="text-[10px] text-white/40 mt-2 leading-relaxed">
+                    Auto-spawns roaming winds across the visible world.
+                  </p>
+                </div>
+                <Slider
+                  label="Wind Intensity"
+                  desc="Main storm speed level."
+                  value={stormWeather.baseWindSpeed} min={0.5} max={1.8} step={0.01}
+                  onChange={(v: number) => setStormWeather(p => ({ ...p, baseWindSpeed: v }))}
+                />
+                <button
+                  onClick={handleSendNewsWind}
+                  className="w-full px-3 py-2 rounded-md border border-blue-400/30 bg-blue-500/10 text-blue-200 text-xs uppercase tracking-wide hover:bg-blue-500/20 transition-colors"
+                >
+                  Send Wind
+                </button>
+              </ControlGroup>
+            )}
+
+
+          </div>
+
+          {/* New Game Button at the bottom - Fixed */}
+          <div className="p-6 pt-4 pb-8 border-t border-white/5 bg-black/20 backdrop-blur-md flex justify-center shrink-0">
+            <button
+              onClick={handleNewGame}
+              className="w-40 px-4 py-2 rounded-full bg-white/5 border border-white/10 text-white/40 text-[10px] font-mono uppercase tracking-widest hover:bg-white/10 hover:text-white transition-all duration-300 backdrop-blur-md"
+              title="Restart Game"
+            >
+              New Game
+            </button>
+          </div>
+
+
 
 
 
@@ -1082,7 +1141,10 @@ useEffect(() => {
       </div>
 
       {/* Reproduction Freeze Overlay */}
-      <LabyrinthJournal engine={engine} />
+      {/* Labyrinth Journal - Gated by Phase 2 */}
+      {engine?.activeWorm && DiscoveryEngine.isFeatureEnabled(engine.activeWorm, 'JOURNAL_LOG') && (
+        <LabyrinthJournal engine={engine} isSidebarOpen={isLeftOpen} />
+      )}
       {
         isReproducing && (
           <div className="absolute inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center pointer-events-auto">

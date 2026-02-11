@@ -1,6 +1,8 @@
-import { System, Leg, Worm, WormState } from './types';
+import { System, Leg, Worm, WormState, EvolutionPhase } from './types';
 import { EventBus, EVENTS } from './events';
 import { GameConfig } from './types';
+import { GameDirector } from '../systems/GameDirector';
+import { DiscoveryEngine, FeatureKey } from '../systems/DiscoveryEngine';
 
 export class Engine {
     canvas: HTMLCanvasElement;
@@ -93,6 +95,30 @@ export class Engine {
         this.config = newConfig;
     }
 
+    resetGame() {
+        this.stop();
+
+        // 1. Reset Camera and World state
+        this.cameraPos = { x: this.width / 2, y: this.height / 2 };
+        this.targetPos = { ...this.cameraPos };
+        this.mouseScreenPos = { ...this.cameraPos };
+        this.mousePos = this.screenToWorld(this.mouseScreenPos);
+
+        // 2. Clear Worms
+        this.wormState.worms.clear();
+        this.wormState.nextWormId = 1;
+        this.wormState.activeWormId = 'worm-0';
+
+        // 3. Re-create initial worm
+        this.createWorm('worm-0', null, 0, this.cameraPos);
+
+        // 4. Notify Systems
+        this.events.emit(EVENTS.GAME_RESET, {});
+
+        // 5. Restart Loop
+        this.start();
+    }
+
     private loop = (timestamp: number) => {
         // const dt = (timestamp - this.lastTime) / 1000; // Delta time in seconds
         const dt = 16.66; // Fixed timestep for stability for now, matching original logic implicitly
@@ -109,6 +135,22 @@ export class Engine {
         this.mousePos = this.screenToWorld(this.mouseScreenPos);
 
         for (const system of this.systems) {
+            // Check for system-level gating
+            const activeWorm = this.wormState.worms.get(this.wormState.activeWormId);
+            if (activeWorm) {
+                // Map system names to DiscoveryEngine features
+                let feature: FeatureKey | null = null;
+                if (system.constructor.name === 'BlackHoleSystem') feature = 'BLACK_HOLE';
+                if (system.constructor.name === 'UIPredatorSystem') feature = 'NEWS_STORM'; // Deity system
+                if (system.constructor.name === 'VoiceInputSystem') feature = 'VOICE_INPUT';
+                if (system.constructor.name === 'ConsciousnessStreamSystem') feature = 'STREAM_OF_CONSCIOUSNESS';
+
+                if (feature && !DiscoveryEngine.isFeatureEnabled(activeWorm, feature)) continue;
+
+                if (system.constructor.name === 'WormLifecycleSystem') {
+                    // Splitting is checked inside the system, but we keep it here for clarity
+                }
+            }
             system.update(dt);
         }
 
@@ -124,6 +166,15 @@ export class Engine {
         this.ctx.translate(this.width / 2 - this.cameraPos.x, this.height / 2 - this.cameraPos.y);
 
         for (const system of this.systems) {
+            const activeWorm = this.wormState.worms.get(this.wormState.activeWormId);
+            if (activeWorm) {
+                let feature: FeatureKey | null = null;
+                if (system.constructor.name === 'BlackHoleSystem') feature = 'BLACK_HOLE';
+                if (system.constructor.name === 'UIPredatorSystem') feature = 'NEWS_STORM';
+                if (system.constructor.name === 'ConsciousnessStreamSystem') feature = 'STREAM_OF_CONSCIOUSNESS';
+
+                if (feature && !DiscoveryEngine.isFeatureEnabled(activeWorm, feature)) continue;
+            }
             system.draw(this.ctx);
         }
 
@@ -236,7 +287,12 @@ export class Engine {
             swallowedWords: [],
             digestionQueue: [],
             soul: this.createInitialSoul(parent),
-            particles: []
+            particles: [],
+            evolutionPhase: EvolutionPhase.LARVAL,
+            totalWordsConsumed: 0,
+            hasProvedSentience: false,
+            coreRadius: parent ? parent.coreRadius * 0.8 : this.config.coreRadius, // Children start slightly smaller than current parent
+            hipRadius: parent ? parent.hipRadius * 0.8 : this.config.hipRadius
         };
 
         this.wormState.worms.set(id, worm);

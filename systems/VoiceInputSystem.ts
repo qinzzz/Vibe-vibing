@@ -1,6 +1,7 @@
 import { System } from '../core/types';
 import { Engine } from '../core/Engine';
 import { EVENTS } from '../core/events';
+import { DiscoveryEngine } from './DiscoveryEngine';
 
 // Types for Web Speech API (as it's experimental and not in all TS libs)
 interface SpeechRecognitionEvent extends Event {
@@ -136,6 +137,11 @@ export class VoiceInputSystem implements System {
 
     private handleToggleVoice = async (enabled: boolean) => {
         if (enabled) {
+            const worm = this.engine.activeWorm;
+            if (!DiscoveryEngine.isFeatureEnabled(worm, 'VOICE_INPUT')) {
+                console.warn('[VoiceSystem] Voice input is gated until Deity phase.');
+                return;
+            }
             await this.startListening();
         } else {
             this.stopListening();

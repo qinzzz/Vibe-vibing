@@ -63,3 +63,150 @@
     transform: translate(0);
   }
 }
+
+/* Singularity Shift Effect */
+.singularity-shift {
+  animation: singularity-jitter 0.4s cubic-bezier(.36, .07, .19, .97) both infinite;
+  filter: hue-rotate(0deg);
+  transition: filter 0.1s ease-out;
+}
+
+.singularity-shift::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: white;
+  z-index: 100;
+  animation: flash-invert 0.5s ease-out forwards;
+  pointer-events: none;
+}
+
+@keyframes singularity-jitter {
+  0% {
+    transform: translate(0, 0) skew(0deg) scale(1);
+    filter: hue-rotate(0deg) contrast(1) blur(0px);
+  }
+
+  5% {
+    transform: translate(-10px, -5px) skew(5deg) scale(1.1);
+    filter: hue-rotate(90deg) contrast(2) blur(2px) drop-shadow(5px 5px 10px red);
+  }
+
+  10% {
+    transform: translate(15px, 10px) skew(-8deg) scale(0.95);
+    filter: hue-rotate(180deg) contrast(3) blur(1px) drop-shadow(-5px -5px 10px blue);
+  }
+
+  15% {
+    transform: translate(-20px, 15px) skew(12deg) scale(1.2);
+    filter: hue-rotate(270deg) contrast(2) brightness(2) drop-shadow(10px 0 15px lime);
+  }
+
+  20% {
+    transform: translate(0, 0) skew(0deg) scale(1);
+    filter: hue-rotate(360deg) contrast(1) blur(0px);
+  }
+}
+
+@keyframes flash-invert {
+  0% {
+    opacity: 0;
+    backdrop-filter: invert(0) brightness(1);
+  }
+
+  10% {
+    opacity: 1;
+    backdrop-filter: invert(1) brightness(2);
+    background: white;
+  }
+
+  30% {
+    opacity: 0.5;
+    backdrop-filter: invert(0.5) brightness(1.5);
+    background: rgba(255, 255, 255, 0.5);
+  }
+
+  100% {
+    opacity: 0;
+    backdrop-filter: invert(0) brightness(1);
+    background: transparent;
+  }
+}
+
+/* Custom biological animations */
+@keyframes bio-pulse {
+
+  0%,
+  100% {
+    box-shadow:
+      0 0 15px rgba(59, 130, 246, 0.4),
+      inset 0 0 8px rgba(59, 130, 246, 0.2);
+    transform: scale(1);
+    border-color: rgba(59, 130, 246, 0.4);
+  }
+
+  50% {
+    box-shadow:
+      0 0 35px rgba(59, 130, 246, 0.7),
+      inset 0 0 20px rgba(59, 130, 246, 0.5);
+    transform: scale(1.02);
+    border-color: rgba(59, 130, 246, 0.8);
+  }
+}
+
+@keyframes bio-glow {
+
+  0%,
+  100% {
+    opacity: 0.5;
+    filter: blur(4px);
+  }
+
+  50% {
+    opacity: 1;
+    filter: blur(8px);
+  }
+}
+
+.bio-panel {
+  animation: bio-pulse 6s ease-in-out infinite;
+  background: linear-gradient(135deg, rgba(10, 12, 24, 0.95) 0%, rgba(20, 28, 52, 0.95) 100%);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  backdrop-filter: blur(20px);
+}
+
+.bio-progress-bg {
+  background: rgba(0, 0, 0, 0.4);
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.bio-progress-fill {
+  background: linear-gradient(90deg, #3b82f6, #6366f1, #a855f7, #3b82f6);
+  background-size: 300% 100%;
+  animation: shimmer 3s linear infinite;
+  box-shadow: 0 0 20px rgba(139, 92, 246, 0.6);
+  position: relative;
+}
+
+.bio-progress-fill::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: white;
+  opacity: 0.2;
+  animation: bio-glow 2s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 300% 0;
+  }
+
+  100% {
+    background-position: 0% 0;
+  }
+}

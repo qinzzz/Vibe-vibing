@@ -37,9 +37,10 @@ const TypewriterText: React.FC<{ text: string }> = ({ text }) => {
 
 interface LabyrinthJournalProps {
     engine: Engine | null;
+    isSidebarOpen?: boolean;
 }
 
-export const LabyrinthJournal: React.FC<LabyrinthJournalProps> = ({ engine }) => {
+export const LabyrinthJournal: React.FC<LabyrinthJournalProps> = ({ engine, isSidebarOpen = false }) => {
     const [entries, setEntries] = useState<JournalEntry[]>([]);
     const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -79,7 +80,7 @@ export const LabyrinthJournal: React.FC<LabyrinthJournalProps> = ({ engine }) =>
     if (entries.length === 0) return null;
 
     return (
-        <div className="absolute left-6 bottom-32 z-40 w-80 max-h-[400px] pointer-events-none flex flex-col gap-4">
+        <div className={`absolute bottom-32 z-40 w-80 max-h-[30vh] pointer-events-none flex flex-col gap-4 transition-all duration-300 ease-in-out ${isSidebarOpen ? 'left-[280px]' : 'left-6'}`}>
             <div className="text-[10px] text-white/40 uppercase tracking-[0.2em] font-mono-custom pl-2 border-l border-white/20">
                 Log of the Labyrinth
             </div>

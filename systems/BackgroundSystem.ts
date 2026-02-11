@@ -3,6 +3,7 @@ import { Engine } from '../core/Engine';
 import { BACKGROUND_PARAGRAPHS, LAYOUT_CONSTANTS } from '../constants';
 import { tokenizeAndLayout } from '../utils/textLayout';
 import { EVENTS } from '../core/events';
+import { DiscoveryEngine } from './DiscoveryEngine';
 
 type StormPhase = 'vortex' | 'alignment' | 'settling';
 type StormLetterMode = 'advect' | 'settled';
@@ -179,6 +180,15 @@ export class BackgroundSystem implements System {
         this.engine.events.on(EVENTS.NEWS_STORM_DEBUG_UPDATED, this.handleNewsStormDebugUpdated);
         this.engine.events.on(EVENTS.NEWS_STORM_MODE_UPDATED, this.handleNewsStormModeUpdated);
         this.engine.events.on(EVENTS.NEWS_STORM_WEATHER_UPDATED, this.handleNewsStormWeatherUpdated);
+
+        this.engine.events.on(EVENTS.GAME_RESET, () => {
+            this.blocks = [];
+            this.activeStorm = null;
+            this.queuedStorms = [];
+            this.nearbyWordCheckTimer = 0;
+            this.regenerationCooldownTimer = 0;
+            this.startupRegenerationDelay = this.STARTUP_REGEN_GUARD;
+        });
     }
 
     private handleWordReleased = (data: { text: string; pos: { x: number; y: number } }) => {
@@ -192,9 +202,18 @@ export class BackgroundSystem implements System {
         placement?: StormPlacement;
         immediate?: boolean;
     }) => {
+        const worm = this.engine.activeWorm;
+        if (!worm || !DiscoveryEngine.isFeatureEnabled(worm, 'NEWS_STORM')) return;
+
         const headline = payload?.headline?.trim()
             || this.pickStormHeadline()
             || this.generateSimulatedHeadline();
+        const density = this.getOnScreenDensity();
+        if (density.paragraphs > 4 || density.standaloneWords > 10) {
+            console.log(`[NEWS] Storm suppressed due to density (P:${density.paragraphs}, W:${density.standaloneWords})`);
+            return;
+        }
+
         this.enqueueStorm({
             headline,
             placement: payload?.placement ?? 'anchor',
@@ -445,6 +464,28 @@ export class BackgroundSystem implements System {
 
     private canPlaceBlock(testBlock: TextBlock, padding = 50, avoidStream = false) {
         if (avoidStream && this.overlapsStreamLane(testBlock, padding)) return false;
+
+        // Density Check: Max 5 tokens in 200px radius
+        const radius = 200;
+        const radiusSq = radius * radius;
+        let localCount = 0;
+        const centerX = testBlock.x + testBlock.width / 2;
+        const centerY = testBlock.y + testBlock.height / 2;
+
+        for (const block of this.blocks) {
+            for (const token of block.tokens) {
+                if (token.state === 'present') {
+                    const dx = token.x + token.width / 2 - centerX;
+                    const dy = token.y + token.height / 2 - centerY;
+                    if (dx * dx + dy * dy < radiusSq) {
+                        localCount++;
+                    }
+                }
+            }
+        }
+
+        if (localCount > 5) return false;
+
         return !this.blocks.some(block => this.hasPresentTokens(block) && this.blocksOverlap(testBlock, block, padding));
     }
 
@@ -464,6 +505,8 @@ export class BackgroundSystem implements System {
                 const testBlock = tokenizeAndLayout(text, spawn.x, spawn.y, ctx);
 
                 if (this.canPlaceBlock(testBlock, 50, true)) {
+                    testBlock.age = 0;
+                    testBlock.opacity = 0; // Initial opacity for fade-in
                     this.blocks.push(testBlock);
                     placed = true;
                     break;
@@ -783,7 +826,9 @@ export class BackgroundSystem implements System {
             x: centerX - width / 2,
             y: top,
             width,
-            height
+            height,
+            age: 0,
+            opacity: 0.15
         };
     }
 
@@ -1132,6 +1177,14 @@ export class BackgroundSystem implements System {
         });
     }
 
+    private shiftBlock(block: TextBlock, dx: number, dy: number) {
+        block.x += dx;
+        block.y += dy;
+        block.tokens.forEach(token => {
+            this.shiftToken(token, dx, dy);
+        });
+    }
+
     private distanceToSegment(point: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number }) {
         const abx = b.x - a.x;
         const aby = b.y - a.y;
@@ -1159,7 +1212,11 @@ export class BackgroundSystem implements System {
         const { x, y } = pos;
         this.pendingToken = null;
 
+        const INTERACTION_OPACITY_THRESHOLD = 0.05;
+
         for (const block of this.blocks) {
+            if ((block.opacity ?? 0.15) < INTERACTION_OPACITY_THRESHOLD) continue;
+
             const token = block.tokens.find(t =>
                 t.state === 'present' &&
                 x >= t.x && x <= t.x + t.width &&
@@ -1173,9 +1230,85 @@ export class BackgroundSystem implements System {
         }
     };
 
+    private updateAgingAndDrift(dtSec: number) {
+        const t = performance.now() * 0.001;
+
+        // Anti-Overlap: Separation Pass
+        const padding = 10;
+        for (let i = 0; i < this.blocks.length; i++) {
+            const a = this.blocks[i];
+            if (!this.hasPresentTokens(a)) continue;
+
+            for (let j = i + 1; j < this.blocks.length; j++) {
+                const b = this.blocks[j];
+                if (!this.hasPresentTokens(b)) continue;
+
+                if (this.blocksOverlap(a, b, padding)) {
+                    // Calculate repulsive force
+                    const dx = (a.x + a.width / 2) - (b.x + b.width / 2);
+                    const dy = (a.y + a.height / 2) - (b.y + b.height / 2);
+                    const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+
+                    const force = 0.5; // Pixels per frame
+                    const shiftX = (dx / dist) * force;
+                    const shiftY = (dy / dist) * force;
+
+                    this.shiftBlock(a, shiftX, shiftY);
+                    this.shiftBlock(b, -shiftX, -shiftY);
+                }
+            }
+        }
+
+        for (const block of this.blocks) {
+            if (block.age === undefined) block.age = 0;
+            block.age += dtSec;
+
+            // Fade-In: 0 to 0.15 over 2 seconds
+            const fadeInDuration = 2.0;
+            const fadeInProgress = this.clamp(block.age / fadeInDuration, 0, 1);
+            const baseOpacity = 0.15;
+
+            // Fading: Decays from baseOpacity starting after 10s, gone at 60s
+            const startFade = 10;
+            const endFade = 60;
+            const fadeProgress = this.clamp((block.age - startFade) / (endFade - startFade), 0, 1);
+            block.opacity = this.lerp(baseOpacity * fadeInProgress, 0.02, fadeProgress);
+
+            // Subtle Drift: Recedes as it ages
+            if (block.age > startFade) {
+                const driftScale = fadeProgress * 0.2; // Max 0.2px/frame drift
+                const noiseX = this.valueNoise2D(block.x * 0.01, t * 0.1);
+                const noiseY = this.valueNoise2D(block.y * 0.01 + 100, t * 0.1);
+
+                const dx = noiseX * driftScale;
+                const dy = noiseY * driftScale;
+
+                block.x += dx;
+                block.y += dy;
+                block.tokens.forEach(token => {
+                    token.x += dx;
+                    token.y += dy;
+                    token.letters.forEach(letter => {
+                        letter.x += dx;
+                        letter.y += dy;
+                    });
+                });
+            }
+        }
+
+        // Culling: Remove blocks older than 65s
+        const initialCount = this.blocks.length;
+        this.blocks = this.blocks.filter(b => (b.age ?? 0) < 65);
+        if (this.blocks.length < initialCount) {
+            console.log(`[BACKGROUND] Culled ${initialCount - this.blocks.length} aged-out blocks.`);
+        }
+    }
+
     update(dt: number) {
         this.lockViewportStormToCanvas();
         const dtSec = dt / 1000;
+
+        this.updateAgingAndDrift(dtSec);
         this.nearbyWordCheckTimer -= dtSec;
         this.regenerationCooldownTimer = Math.max(0, this.regenerationCooldownTimer - dtSec);
         this.startupRegenerationDelay = Math.max(0, this.startupRegenerationDelay - dtSec);
@@ -1183,9 +1316,11 @@ export class BackgroundSystem implements System {
         const { x, y } = this.engine.mousePos;
         let anyHovered = false;
 
+        const INTERACTION_OPACITY_THRESHOLD = 0.05;
         for (const block of this.blocks) {
+            const isVisible = (block.opacity ?? 0.15) >= INTERACTION_OPACITY_THRESHOLD;
             for (const token of block.tokens) {
-                if (token.state === 'present') {
+                if (token.state === 'present' && isVisible) {
                     const isOver = x >= token.x && x <= token.x + token.width &&
                         y >= token.y && y <= token.y + token.height;
                     token.isHovered = isOver;
@@ -1205,13 +1340,21 @@ export class BackgroundSystem implements System {
             const ty = this.pendingToken.y + this.pendingToken.height / 2;
             const dist = Math.sqrt((core.x - tx) ** 2 + (core.y - ty) ** 2);
 
-            if (dist < 70) {
+            const INTERACTION_OPACITY_THRESHOLD = 0.05;
+            // Find parent block to check opacity
+            const parentBlock = this.blocks.find(b => b.tokens.includes(this.pendingToken!));
+            const isVisible = (parentBlock?.opacity ?? 0.15) >= INTERACTION_OPACITY_THRESHOLD;
+
+            if (dist < 70 && isVisible) {
                 this.pendingToken.state = 'eaten';
                 this.engine.events.emit(EVENTS.TOKEN_EATEN, {
                     id: this.pendingToken.id,
                     text: this.pendingToken.text,
                     pos: { x: tx, y: ty }
                 });
+                this.pendingToken = null;
+            } else if (dist < 70 && !isVisible) {
+                // Forget invisible pending tokens
                 this.pendingToken = null;
             }
         }
@@ -1277,6 +1420,9 @@ export class BackgroundSystem implements System {
 
     private updateStormMode(dt: number) {
         if (!this.stormModeEnabled) return;
+        const worm = this.engine.activeWorm;
+        if (!worm || !DiscoveryEngine.isFeatureEnabled(worm, 'NEWS_STORM')) return;
+
         this.updateWeatherPhase(dt);
         this.updatePrevailingWindField(dt);
 
@@ -1285,11 +1431,14 @@ export class BackgroundSystem implements System {
         if (this.stormModeSpawnTimer > 0) return;
 
         if (this.queuedStorms.length < this.STORM_MODE_MAX_QUEUE) {
-            this.enqueueStorm({
-                headline: this.pickStormHeadline() || this.generateSimulatedHeadline(),
-                placement: 'viewport',
-                immediate: false
-            });
+            const density = this.getOnScreenDensity();
+            if (density.paragraphs <= 4 && density.standaloneWords <= 10) {
+                this.enqueueStorm({
+                    headline: this.pickStormHeadline() || this.generateSimulatedHeadline(),
+                    placement: 'viewport',
+                    immediate: false
+                });
+            }
         }
         this.stormModeSpawnTimer = this.nextStormModeDelayFrames(false);
     }
@@ -1478,6 +1627,39 @@ export class BackgroundSystem implements System {
         };
     }
 
+    private getOnScreenDensity() {
+        const cam = this.engine.cameraPos;
+        const halfW = this.engine.width / 2;
+        const halfH = this.engine.height / 2;
+        const viewport = {
+            minX: cam.x - halfW,
+            maxX: cam.x + halfW,
+            minY: cam.y - halfH,
+            maxY: cam.y + halfH
+        };
+
+        let paragraphs = 0;
+        let standaloneWords = 0;
+
+        for (const block of this.blocks) {
+            const isOnScreen = block.x + block.width > viewport.minX &&
+                block.x < viewport.maxX &&
+                block.y + block.height > viewport.minY &&
+                block.y < viewport.maxY;
+
+            if (isOnScreen) {
+                const presentTokens = block.tokens.filter(t => t.state === 'present');
+                if (presentTokens.length > 1) {
+                    paragraphs++;
+                } else if (presentTokens.length === 1) {
+                    standaloneWords++;
+                }
+            }
+        }
+
+        return { paragraphs, standaloneWords };
+    }
+
     private checkAndRegenerateWords() {
         const anchor = this.getSpawnAnchor();
         const radiusSq = this.SPAWN_MAX_DISTANCE * this.SPAWN_MAX_DISTANCE;
@@ -1532,23 +1714,29 @@ export class BackgroundSystem implements System {
             const attempts = 50;
             const ctx = this.engine.ctx;
 
-            for (const text of paragraphs) {
-                let placed = false;
+            for (let i = 0; i < paragraphs.length; i++) {
+                const text = paragraphs[i];
 
-                for (let j = 0; j < attempts; j++) {
-                    const spawn = this.getSpawnPosition();
-                    const testBlock = tokenizeAndLayout(text, spawn.x, spawn.y, ctx);
+                // Staggered appearance: delay each paragraph
+                setTimeout(() => {
+                    let placed = false;
+                    for (let j = 0; j < attempts; j++) {
+                        const spawn = this.getSpawnPosition();
+                        const testBlock = tokenizeAndLayout(text, spawn.x, spawn.y, ctx);
 
-                    if (this.canPlaceBlock(testBlock, 50, true)) {
-                        this.blocks.push(testBlock);
-                        placed = true;
-                        break;
+                        if (this.canPlaceBlock(testBlock, 50, true)) {
+                            testBlock.age = 0;
+                            testBlock.opacity = 0; // Start invisible for fade-in
+                            this.blocks.push(testBlock);
+                            placed = true;
+                            break;
+                        }
                     }
-                }
 
-                if (!placed) {
-                    console.log('[BACKGROUND] Could not place paragraph (no space)');
-                }
+                    if (!placed) {
+                        console.log('[BACKGROUND] Could not place paragraph (no space)');
+                    }
+                }, i * 500); // 500ms stagger
             }
         } catch (err) {
             console.error('[BACKGROUND] Failed to regenerate words:', err);
@@ -1566,11 +1754,24 @@ export class BackgroundSystem implements System {
 
         this.drawStormWeather(ctx);
 
+        const activeWorm = this.engine.activeWorm;
+        const wormPos = activeWorm?.corePos || this.engine.cameraPos;
+
         this.blocks.forEach(block => {
+            const blockOpacity = block.opacity ?? 0.15;
+
+            // Distance-based culling: 50% nearby (<200px), 5% far (>1000px)
+            const dx = (block.x + block.width / 2) - wormPos.x;
+            const dy = (block.y + block.height / 2) - wormPos.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+
+            const distFactor = this.clamp(1 - (dist - 200) / (1000 - 200), 0.1, 1.0);
+            const finalOpacity = blockOpacity * distFactor * 3.33; // Scale to 0.5 peak (0.15 * 3.33 = 0.5)
+
             block.tokens.forEach(token => {
                 if (token.state === 'present') {
                     token.letters.forEach(letter => {
-                        ctx.fillStyle = token.isHovered ? 'rgba(96, 165, 250, 0.6)' : 'rgba(255,255,255,0.15)';
+                        ctx.fillStyle = token.isHovered ? 'rgba(96, 165, 250, 0.8)' : `rgba(255, 255, 255, ${this.clamp(finalOpacity, 0, 1)})`;
                         ctx.fillText(letter.char, letter.x, letter.y);
                     });
                 }
@@ -1793,6 +1994,30 @@ export class BackgroundSystem implements System {
         }
         // rare long lull
         return this.randomRange(this.lerp(1100, 760, volatility), this.lerp(1700, 1160, volatility));
+    }
+
+    private valueNoise2D(x: number, y: number) {
+        const xi = Math.floor(x);
+        const yi = Math.floor(y);
+        const xf = x - xi;
+        const yf = y - yi;
+
+        const v00 = this.hash2D(xi, yi);
+        const v10 = this.hash2D(xi + 1, yi);
+        const v01 = this.hash2D(xi, yi + 1);
+        const v11 = this.hash2D(xi + 1, yi + 1);
+
+        const u = xf * xf * (3 - 2 * xf);
+        const v = yf * yf * (3 - 2 * yf);
+
+        const nx0 = this.lerp(v00, v10, u);
+        const nx1 = this.lerp(v01, v11, u);
+        return this.lerp(nx0, nx1, v);
+    }
+
+    private hash2D(x: number, y: number) {
+        const s = Math.sin(x * 127.1 + y * 311.7 + 74.7) * 43758.5453123;
+        return (s - Math.floor(s)) * 2 - 1;
     }
 
     private randomRange(min: number, max: number) {

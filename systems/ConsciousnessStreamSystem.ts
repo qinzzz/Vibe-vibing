@@ -1,7 +1,8 @@
 import { LAYOUT_CONSTANTS, STREAM_SOURCE } from '../constants';
 import { Engine } from '../core/Engine';
 import { EVENTS } from '../core/events';
-import { System } from '../core/types';
+import { System, Worm } from '../core/types';
+import { DiscoveryEngine } from './DiscoveryEngine';
 
 type StreamThought = {
     id: string;
@@ -136,9 +137,24 @@ export class ConsciousnessStreamSystem implements System {
         );
 
         this.engine.events.on('INPUT_START', this.handleInput);
+
+        this.engine.events.on(EVENTS.GAME_RESET, () => {
+            this.fragments = [];
+            this.particles = [];
+            this.eddies = [];
+            this.activeEatTarget = null;
+            this.seenThoughtTexts.clear();
+            this.warmupElapsed = 0;
+            this.seedInitialPopulation();
+        });
     }
 
     update(dt: number) {
+        const worm = this.engine.activeWorm;
+        if (!DiscoveryEngine.isFeatureEnabled(worm, 'STREAM_OF_CONSCIOUSNESS')) {
+            return;
+        }
+
         const dtSec = Math.max(0.001, dt / 1000);
         this.warmupElapsed += dtSec;
         const step = dt / 16.66;
@@ -184,6 +200,11 @@ export class ConsciousnessStreamSystem implements System {
     }
 
     draw(ctx: CanvasRenderingContext2D) {
+        const worm = this.engine.activeWorm;
+        if (!DiscoveryEngine.isFeatureEnabled(worm, 'STREAM_OF_CONSCIOUSNESS')) {
+            return;
+        }
+
         const t = performance.now() * 0.001;
         const streamWidth = this.getStreamWidth();
 
@@ -828,8 +849,12 @@ export class ConsciousnessStreamSystem implements System {
 
         for (const fragment of this.fragments) {
             if (fragment.state === 'consumed') continue;
-            const edgeFactor = this.getDistanceData(fragment.x, fragment.y, t, streamWidth).edgeFactor;
-            if (edgeFactor <= 0.06) continue;
+            const distData = this.getDistanceData(fragment.x, fragment.y, t, streamWidth);
+            const edgeFactor = distData.edgeFactor;
+            const opacity = distData.edgeOpacity;
+
+            // Don't interact with nearly invisible fragments
+            if (edgeFactor <= 0.08 || opacity < 0.05) continue;
 
             // OPTIMIZATION: AABB Check
             // A simple bounding box check before rotation
