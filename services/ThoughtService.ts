@@ -9,7 +9,9 @@ export class ThoughtService {
         this.events.on(EVENTS.VOCAB_UPDATED, this.handleVocabUpdate);
     }
 
-    private handleVocabUpdate = async (vocab: string[]) => {
+    private handleVocabUpdate = async (data: { vocab: string[], identity?: any }) => {
+        const vocab = data.vocab;
+        const identity = data.identity;
         console.log('[ThoughtService] VOCAB_UPDATED event received, vocab length:', vocab.length);
         console.log('[ThoughtService] isGenerating:', this.isGenerating);
 
@@ -26,7 +28,7 @@ export class ThoughtService {
             const response = await fetch('/api/thought', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ vocab })
+                body: JSON.stringify({ vocab, identity })
             });
 
             console.log('[ThoughtService] Response status:', response.status);

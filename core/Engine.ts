@@ -3,6 +3,7 @@ import { EventBus, EVENTS } from './events';
 import { GameConfig } from './types';
 import { GameDirector } from '../systems/GameDirector';
 import { DiscoveryEngine, FeatureKey } from '../systems/DiscoveryEngine';
+import { MOTTO_TEMPLATES } from '../constants';
 
 export class Engine {
     canvas: HTMLCanvasElement;
@@ -394,12 +395,23 @@ export class Engine {
         };
     }
 
-    private buildMotto(axes: { calm: number; hopeful: number; poetic: number }, mood: string) {
-        if (axes.hopeful > 0.35) return 'I grow by what I can keep.';
-        if (axes.calm < -0.25) return 'I chase storms but live on calm.';
-        if (axes.poetic > 0.25) return 'Feed me gently; I am learning.';
-        if (mood === 'contemplative') return 'What I eat, I become.';
-        return 'I remember what survives the current.';
+    private buildMotto(axes: any, mood: string) {
+        // Find the strongest axis
+        const axisEntries = Object.entries(axes).filter(([_, val]) => typeof val === 'number');
+        const [strongestAxis, value] = axisEntries.sort((a, b) => Math.abs(b[1] as number) - Math.abs(a[1] as number))[0] || ['neutral', 0];
+
+        // If the value is very low, use neutral
+        const category = (Math.abs(value as number) < 0.1 || !MOTTO_TEMPLATES.openers[strongestAxis as keyof typeof MOTTO_TEMPLATES.openers]) ? 'neutral' : strongestAxis;
+
+        const openers = MOTTO_TEMPLATES.openers[category as keyof typeof MOTTO_TEMPLATES.openers] || MOTTO_TEMPLATES.openers.neutral;
+        const verbs = MOTTO_TEMPLATES.verbs[category as keyof typeof MOTTO_TEMPLATES.verbs] || MOTTO_TEMPLATES.verbs.neutral;
+        const tails = MOTTO_TEMPLATES.tails[category as keyof typeof MOTTO_TEMPLATES.tails] || MOTTO_TEMPLATES.tails.neutral;
+
+        const opener = openers[Math.floor(Math.random() * openers.length)];
+        const verb = verbs[Math.floor(Math.random() * verbs.length)];
+        const tail = tails[Math.floor(Math.random() * tails.length)];
+
+        return `${opener} ${verb} ${tail}`;
     }
 
     private clamp(value: number, min: number, max: number) {

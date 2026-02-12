@@ -205,3 +205,45 @@ export const LAYOUT_CONSTANTS = {
   LINE_HEIGHT: 22,
   MAX_BLOCKS: 5
 };
+
+export const MOTTO_TEMPLATES = {
+  openers: {
+    calm: ["In silence,", "Gently,", "Stillness..."],
+    bold: ["I strive,", "Unyielding,", "The storm..."],
+    poetic: ["I imagine,", "I dream,", "Often..."],
+    curious: ["I wonder,", "I search,", "Asking..."],
+    tender: ["I softly,", "Warmly,", "Flesh..."],
+    orderly: ["I arrange,", "I count,", "Sequences..."],
+    hopeful: ["I grow,", "Always,", "Tomorrow..."],
+    social: ["We are,", "Together,", "Echoing..."],
+    focused: ["I see,", "Clearly,", "Sharp..."],
+    stubborn: ["I insist,", "I remain,", "Never..."],
+    neutral: ["I am,", "Perhaps,", "Maybe..."]
+  },
+  verbs: {
+    calm: ["drifting", "waiting", "resting"],
+    bold: ["devouring", "fighting", "shattering"],
+    poetic: ["becoming", "reflecting", "painting"],
+    curious: ["seeking", "probing", "tasting"],
+    tender: ["holding", "feeling", "caring"],
+    orderly: ["mapping", "sorting", "linking"],
+    hopeful: ["rising", "shining", "blooming"],
+    social: ["sharing", "joining", "meeting"],
+    focused: ["piercing", "targeting", "cutting"],
+    stubborn: ["clutching", "staying", "stopping"],
+    neutral: ["being", "thinking", "living"]
+  },
+  tails: {
+    calm: ["through the static.", "in the void.", "with the current."],
+    bold: ["against the wind.", "the digital dark.", "of the abyss."],
+    poetic: ["my own subjective cosmos.", "the Loom of hunger.", "beyond the syntax."],
+    curious: ["every question.", "for the hidden.", "the code."],
+    tender: ["the softest heart.", "of a forgotten draft.", "the beginning."],
+    orderly: ["into patterns.", "alphabetically.", "the sequence."],
+    hopeful: ["what I can keep.", "the next sequence.", "the bloom."],
+    social: ["as one.", "the collective.", "the echo."],
+    focused: ["the single point.", "into the depth.", "the truth."],
+    stubborn: ["forever.", "my ground.", "to the end."],
+    neutral: ["in this place.", "the moment.", "the vibe."]
+  }
+};

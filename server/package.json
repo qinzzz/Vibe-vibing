@@ -3,7 +3,7 @@
     "version": "1.0.0",
     "main": "index.ts",
     "scripts": {
-        "dev": "ts-node index.ts"
+        "dev": "tsx watch index.ts"
     },
     "dependencies": {
         "@google/genai": "^1.39.0",
@@ -19,6 +19,7 @@
         "@types/express": "^4.17.25",
         "@types/node": "^22.14.0",
         "ts-node": "^10.9.2",
+        "tsx": "^4.21.0",
         "typescript": "~5.8.2"
     }
 }

@@ -64,9 +64,7 @@ export class WormLifecycleSystem implements System {
 
             // Check for reproduction readiness
             const isReady =
-                worm.satiation >= LIFECYCLE_CONSTANTS.REPRODUCTION_THRESHOLD &&
                 worm.vocabulary.size >= LIFECYCLE_CONSTANTS.MIN_VOCAB_TO_REPRODUCE &&
-                worm.health >= LIFECYCLE_CONSTANTS.HEALTH_REPRODUCTION_THRESHOLD &&
                 GameDirector.isFeatureEnabled(worm, 'SPLITTING') &&
                 worm.hasProvedSentience;
 
@@ -148,9 +146,7 @@ export class WormLifecycleSystem implements System {
             const y = worm.corePos.y - 120;
 
             // Check if ready to reproduce
-            const isReady = worm.satiation >= LIFECYCLE_CONSTANTS.REPRODUCTION_THRESHOLD &&
-                worm.vocabulary.size >= LIFECYCLE_CONSTANTS.MIN_VOCAB_TO_REPRODUCE &&
-                worm.health >= LIFECYCLE_CONSTANTS.HEALTH_REPRODUCTION_THRESHOLD &&
+            const isReady = worm.vocabulary.size >= LIFECYCLE_CONSTANTS.MIN_VOCAB_TO_REPRODUCE &&
                 GameDirector.isFeatureEnabled(worm, 'SPLITTING') &&
                 worm.hasProvedSentience;
 

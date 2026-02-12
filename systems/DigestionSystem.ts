@@ -1,7 +1,7 @@
 import { System, SwallowedWord, Vector2D, InternalLetter, EatingState, ActiveLetterFeed, SpeechBubble, EvolutionPhase, Worm } from '../core/types';
 import { Engine } from '../core/Engine';
 import { EVENTS } from '../core/events';
-import { BLOB_CONSTANTS, COLORS } from '../constants';
+import { BLOB_CONSTANTS, COLORS, MOTTO_TEMPLATES } from '../constants';
 import { GameDirector } from './GameDirector';
 import { DiscoveryEngine } from './DiscoveryEngine';
 
@@ -144,9 +144,7 @@ export class DigestionSystem implements System {
     private handleReproduceTrigger = () => {
         const worm = this.engine.activeWorm;
         // Strict verify conditions before splitting
-        const isReady = worm.satiation >= 99 &&
-            worm.vocabulary.size >= 12 &&
-            worm.health >= 95 &&
+        const isReady = worm.vocabulary.size >= 12 &&
             GameDirector.isFeatureEnabled(worm, 'SPLITTING') &&
             worm.hasProvedSentience;
 
@@ -182,7 +180,10 @@ export class DigestionSystem implements System {
         this.regenerateIdentity(worm, true);
 
         // Emit events to update UI immediately
-        this.engine.events.emit(EVENTS.VOCAB_UPDATED, Array.from(worm.vocabulary));
+        this.engine.events.emit(EVENTS.VOCAB_UPDATED, {
+            vocab: Array.from(worm.vocabulary),
+            identity: worm.soul.identity
+        });
     };
 
     private handleWordRemoved = (id: string) => {
@@ -224,7 +225,10 @@ export class DigestionSystem implements System {
         const worm = this.engine.activeWorm;
         worm.vocabulary.clear();
         worm.swallowedWords.forEach(w => worm.vocabulary.add(w.text));
-        this.engine.events.emit(EVENTS.VOCAB_UPDATED, Array.from(worm.vocabulary));
+        this.engine.events.emit(EVENTS.VOCAB_UPDATED, {
+            vocab: Array.from(worm.vocabulary),
+            identity: worm.soul.identity
+        });
     }
 
     private hydrateStomach(retries: number) {
@@ -325,10 +329,22 @@ export class DigestionSystem implements System {
 
                 // Emit vocab update for active worm
                 const activeWorm = this.engine.activeWorm;
-                this.engine.events.emit(EVENTS.VOCAB_UPDATED, Array.from(activeWorm.vocabulary));
+                this.engine.events.emit(EVENTS.VOCAB_UPDATED, {
+                    vocab: Array.from(activeWorm.vocabulary),
+                    identity: activeWorm.soul.identity
+                });
 
                 // Emit hydration complete event so UI can update
                 this.engine.events.emit(EVENTS.WORMS_HYDRATED, {});
+
+                // Ensure totalWordsConsumed is at least as large as the restored stomach
+                this.engine.wormState.worms.forEach(w => {
+                    const actualCount = w.swallowedWords.length;
+                    if (actualCount > (w.totalWordsConsumed || 0)) {
+                        console.log(`[HYDRATE] Updating totalWordsConsumed for ${w.id}: ${w.totalWordsConsumed} -> ${actualCount}`);
+                        w.totalWordsConsumed = actualCount;
+                    }
+                });
 
                 console.log(`[HYDRATE] ✅ Restoration complete.worms: ${this.engine.wormState.worms.size}, words: ${words.length} `);
             })
@@ -525,7 +541,10 @@ export class DigestionSystem implements System {
         // CRITICAL FIX: Save worm state immediately to ensure it exists in DB for these words
         this.saveWormState(worm).catch(e => console.error("[DIGEST] Initial worm save failed:", e));
 
-        this.engine.events.emit(EVENTS.VOCAB_UPDATED, Array.from(worm.vocabulary));
+        this.engine.events.emit(EVENTS.VOCAB_UPDATED, {
+            vocab: Array.from(worm.vocabulary),
+            identity: worm.soul.identity
+        });
         // Notify for UI Log
         this.engine.events.emit('WORD_LOG', { id: w.id, text: w.text });
 
@@ -575,10 +594,10 @@ export class DigestionSystem implements System {
                 slotIndex: item.index,
                 progress: 0
             };
-            this.engine.events.emit(EVENTS.SFX_MUNCH, {});
+            // this.engine.events.emit(EVENTS.SFX_MUNCH, {});
         } else if (this.activeLetterFeed) {
             const f = this.activeLetterFeed;
-            f.progress += 0.05;
+            f.progress += 0.5; // 10x faster (was 0.05)
 
             if (f.progress >= 1) {
                 const word = worm.swallowedWords.find(w => w.id === f.wordId);
@@ -749,6 +768,10 @@ export class DigestionSystem implements System {
                 });
             });
 
+            // Set child's totalWordsConsumed based on initial inheritance
+            child.totalWordsConsumed = bucket2.length;
+            console.log(`[REPRODUCE] Child ${child.id} initialized with ${child.totalWordsConsumed} words.`);
+
             // Step 5: Name both worms in parallel using Gemini
             try {
                 const namingPromises = [];
@@ -797,7 +820,7 @@ export class DigestionSystem implements System {
             // Step 8: Persist word changes to database efficiently
 
             // A. Clear parent's words
-            await fetch(`/ api / worms / ${parent.id}/words`, { method: 'DELETE' })
+            await fetch(`/api/worms/${parent.id}/words`, { method: 'DELETE' })
                 .catch(err => console.error('[REPRODUCE] Failed to clear parent words:', err));
 
             // B. Batch save parent words
@@ -1089,20 +1112,28 @@ export class DigestionSystem implements System {
                 worm.soul.motto = this.buildMotto(axes, mood);
                 worm.soul.lastMottoAxes = { ...axes };
                 worm.soul.lastMottoMood = mood;
+                this.engine.events.emit(EVENTS.MOTTO_UPDATED, { wormId: worm.id, motto: worm.soul.motto });
             }
         }
     }
 
     private buildMotto(axes: any, mood: string) {
-        if (axes.hopeful > 0.3) return 'I grow by what I can keep.';
-        if (axes.calm < -0.3) return 'I chase storms but live on calm.';
-        if (axes.poetic > 0.3) return 'Feed me gently; I am learning.';
-        if (mood === 'contemplative') return 'What I eat, I become.';
-        if (axes.bold > 0.4) return 'I will devour the obstacles.';
-        if (axes.curious > 0.4) return 'Every taste is a question answered.';
-        if (axes.tender > 0.4) return 'Softness is the only strength.';
+        // Find the strongest axis
+        const axisEntries = Object.entries(axes).filter(([_, val]) => typeof val === 'number');
+        const [strongestAxis, value] = axisEntries.sort((a, b) => Math.abs(b[1] as number) - Math.abs(a[1] as number))[0] || ['neutral', 0];
 
-        return 'I remember what survives the current.';
+        // If the value is very low, use neutral
+        const category = (Math.abs(value as number) < 0.1 || !MOTTO_TEMPLATES.openers[strongestAxis as keyof typeof MOTTO_TEMPLATES.openers]) ? 'neutral' : strongestAxis;
+
+        const openers = MOTTO_TEMPLATES.openers[category as keyof typeof MOTTO_TEMPLATES.openers] || MOTTO_TEMPLATES.openers.neutral;
+        const verbs = MOTTO_TEMPLATES.verbs[category as keyof typeof MOTTO_TEMPLATES.verbs] || MOTTO_TEMPLATES.verbs.neutral;
+        const tails = MOTTO_TEMPLATES.tails[category as keyof typeof MOTTO_TEMPLATES.tails] || MOTTO_TEMPLATES.tails.neutral;
+
+        const opener = openers[Math.floor(Math.random() * openers.length)];
+        const verb = verbs[Math.floor(Math.random() * verbs.length)];
+        const tail = tails[Math.floor(Math.random() * tails.length)];
+
+        return `${opener} ${verb} ${tail}`;
     }
 
     private hashToken(input: string) {

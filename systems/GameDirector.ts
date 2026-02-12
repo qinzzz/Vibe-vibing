@@ -32,10 +32,13 @@ export class GameDirector implements System {
         const worm = this.engine.activeWorm;
         if (!worm) return;
 
+        // Sync lifetime count if it lags behind current stomach
+        const effectiveWordCount = Math.max(worm.totalWordsConsumed || 0, worm.swallowedWords?.length || 0);
+
         // Phase Transitions
         if (worm.evolutionPhase === EvolutionPhase.LARVAL) {
-            // Larval -> Sentient: Total words consumed >= 10
-            if (worm.totalWordsConsumed >= 10) {
+            // Larval -> Sentient: Words >= 10
+            if (effectiveWordCount >= 10) {
                 this.evolve(worm, EvolutionPhase.SENTIENT);
             }
         } else if (worm.evolutionPhase === EvolutionPhase.SENTIENT) {

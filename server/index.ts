@@ -117,10 +117,8 @@ let newsCacheFetchedAt = 0;
 // --- AI Quota & Reliability Management ---
 // We rotate through models to maximize free tier usage across different quotas
 const GEMINI_MODELS = [
-    'gemini-1.5-flash-latest',
-    'gemini-1.5-flash-8b-latest',
-    'gemini-2.0-flash-exp',
-    'gemini-1.5-pro-latest'
+    'gemini-2.5-flash',
+    'gemini-2.0-flash',
 ];
 const providerState = {
     gemini: { exhaustedUntil: 0, lastModelIndex: 0, failureCount: 0 },
@@ -939,12 +937,32 @@ app.delete('/api/worms/:id/words', (req, res) => {
     }
 });
 
+// Helper to check if a word is a Japanese kaomoji/emoticon
+function isKaomoji(word: string): boolean {
+    return /[\(\)\^._´ω]/.test(word);
+}
+
+// Filter thought to only use words from vocab or kaomoji
+function filterThought(text: string, vocab: string[]): string {
+    const allowedWords = new Set(vocab.map(w => w.toLowerCase()));
+
+    // Split by whitespace and remove standard punctuation from end of words for matching
+    const words = text.split(/\s+/);
+    const filtered = words.filter(word => {
+        const cleanWord = word.toLowerCase().replace(/[^a-z0-9]/g, '');
+        return allowedWords.has(cleanWord) || isKaomoji(word);
+    });
+
+    // If nothing matches, return a default kaomoji
+    if (filtered.length === 0) return '(´ω｀)';
+
+    // Join and limit to 10 words as per prompt
+    return filtered.join(' ');
+}
+
 // 3. AI Thought (Proxy)
 app.post('/api/thought', async (req, res) => {
-    const { vocab } = req.body;
-
-
-
+    const { vocab, identity } = req.body;
 
     if (!vocab || !Array.isArray(vocab)) {
         console.error('[THOUGHT] Invalid request: vocab must be an array, got:', typeof vocab);
@@ -952,17 +970,49 @@ app.post('/api/thought', async (req, res) => {
     }
 
     try {
-        console.log('[THOUGHT] Generating thought for vocab:', vocab.slice(0, 5));
-        const prompt = `I have eaten these words: [${vocab.join(', ')}]. Respond as a lively blob. 1. ONLY use words from list or Japanese kaomoji (顏文字 like (o^^o), (´ω｀)). 2. NO standard emojis. 3. Be happy. 4. 1-4 words. 5. No explanation. 6. Use repeats.`;
-        const text = await generateText(prompt, 'thought');
-        console.log('[THOUGHT] Success:', text);
-        res.json({ text: text || '...' });
+        console.log('[THOUGHT] Generating thought for vocab:', vocab, 'identity:', identity);
+
+        const wordRequired = vocab.length > 1;
+        const moodInfo = identity?.mood ? `Your current mood is "${identity.mood}".` : "";
+        const identityInfo = identity?.temperament ? `Your temperament is "${identity.temperament}".` : "";
+
+        const prompt = `I have eaten these words: [${vocab.join(', ')}]. 
+Respond as a lively blob entity. ${moodInfo} ${identityInfo}
+STRICT RULES:
+1. ONLY use words from the provided list! ONLY use words from the provided list!
+2. You can ALSO use Japanese kaomoji (颜文字 like (o^^o), (´ω｀), ^_^).
+4. Keep the total length between 1 to 20 words. When the list is longer, try your absolute best to form complete, meaningful, and poetic sentences that reflect your identity.
+5. NO explanation, NO preamble, NO extra text. NO standard emojis.
+6. You may repeat words from the list.${wordRequired ? "\n7. CRITICAL: You MUST include at least one word - do not just use kaomoji." : ""}
+
+Vocabulary: [${vocab.join(', ')}]`;
+
+        const rawText = await generateText(prompt, 'thought_generation'); // Use a general context for generation logic
+        let filteredText = filterThought(rawText, vocab);
+
+        // Fail-safe: if words > 3 and absolute no words were found, pick one random word
+        if (wordRequired) {
+            const hasRealWord = filteredText.split(/\s+/).some(w => {
+                const clean = w.toLowerCase().replace(/[^a-z0-9]/g, '');
+                return vocab.some(v => v.toLowerCase() === clean);
+            });
+
+            if (!hasRealWord) {
+                const randomWord = vocab[Math.floor(Math.random() * vocab.length)];
+                filteredText = `${randomWord} ${filteredText}`.trim();
+                console.log('[THOUGHT] Fail-safe: No real words found, prepending one:', randomWord);
+            }
+        }
+
+        console.log('[THOUGHT] AI Raw:', rawText);
+        console.log('[THOUGHT] Filtered:', filteredText);
+
+        res.json({ text: filteredText || '...' });
     } catch (err: any) {
         console.error("[THOUGHT] ❌ Failed with error:", err);
         console.error("[THOUGHT] Error details:", {
             message: err.message,
-            stack: err.stack,
-            response: err.response?.data
+            stack: err.stack
         });
         res.status(500).json({ error: 'Brain freeze', details: err.message });
     }

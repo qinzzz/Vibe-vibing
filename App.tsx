@@ -16,150 +16,6 @@ const NEWS_PREFETCH_LIMIT = 25;
 const NEWS_PREFETCH_MS = 2 * 60 * 60 * 1000;
 
 const App: React.FC = () => {
-  const VERB_HINTS = new Set([
-    "am", "is", "are", "was", "were", "be", "been", "being",
-    "have", "has", "had", "do", "does", "did",
-    "feel", "think", "want", "need", "know", "see", "hear", "remember", "forget",
-    "make", "makes", "made", "become", "becomes", "became",
-    "go", "goes", "went", "come", "comes", "came", "move", "moves", "moved",
-    "eat", "eats", "ate", "swallow", "swallows", "swallowed"
-  ]);
-
-  function cleanToken(t: string) {
-    return t
-      .trim()
-      .replace(/[^\w'’-]+/g, "")     // keep letters/numbers/_ and apostrophes
-      .replace(/_/g, "")
-      .toLowerCase();
-  }
-
-  function hasVerb(tokens: string[]) {
-    return tokens.some(t => VERB_HINTS.has(t));
-  }
-
-  function looksHumanReadable(sentence: string) {
-    const rawTokens = sentence.split(/\s+/).filter(Boolean);
-    if (rawTokens.length < 6) return false;           // too short = likely nonsense
-    if (rawTokens.length > 26) return false;          // too long for a bubble
-
-    // Must contain mostly normal word tokens (avoid “%%%%” / random junk)
-    const clean = rawTokens.map(cleanToken).filter(Boolean);
-    const alphaLike = clean.filter(t => /[a-z]/i.test(t));
-    if (alphaLike.length / Math.max(1, clean.length) < 0.75) return false;
-
-    // Avoid spammy repetition like “the the the the”
-    const freq: Record<string, number> = {};
-    for (const t of clean) {
-      freq[t] = (freq[t] || 0) + 1;
-      if (freq[t] >= 4) return false;
-    }
-
-    // Must “feel like a sentence”: has a verb hint + ends with punctuation
-    if (!hasVerb(clean)) return false;
-    if (!/[.!?]$/.test(sentence.trim())) return false;
-
-    return true;
-  }
-
-  function buildSentenceWithFillers(eatenWords: string[]) {
-    const tokens = eatenWords
-      .map(w => (w || "").trim())
-      .filter(Boolean)
-      .map(w => w.replace(/\s+/g, " "));
-
-    if (tokens.length === 0) return null;
-
-    // Keep short
-    const core = tokens.slice(-4);
-
-    const pick = <T,>(arr: T[]) => arr[Math.floor(Math.random() * arr.length)];
-    const startsOk = (t: string) =>
-      ["i", "we", "you", "he", "she", "they", "it", "the", "a", "an", "this", "that"].includes(cleanToken(t));
-
-    const subjectPool = ["I", "I", "I", "I", "This", "The worm"];
-    // slight bias toward "I" for consciousness
-    const subject = startsOk(core[0] || "") ? core[0] : pick(subjectPool);
-
-    // 🧠 Self-aware verbs
-    const introspectiveVerbs = [
-      "wonder",
-      "contemplate",
-      "question",
-      "remember",
-      "notice",
-      "realize",
-      "sense",
-      "consider",
-      "imagine",
-      "observe",
-      "feel"
-    ];
-
-    const reflectiveTails = [
-      ["about", "what", "I", "am"],
-      ["what", "this", "means"],
-      ["why", "it", "exists"],
-      ["if", "I", "am", "becoming"],
-      ["whether", "it", "changes", "me"],
-      ["what", "remains"],
-      ["if", "I", "am", "more", "than", "this"]
-    ];
-
-    const atmosphericOpeners = [
-      ["In", "the", "dark,"],
-      ["For", "a", "moment,"],
-      ["Between", "thoughts,"],
-      ["Inside", "the", "silence,"]
-    ];
-
-    const body = startsOk(core[0] || "") ? core.slice(1) : core;
-
-    const t = Math.random();
-    let sentenceTokens: string[] = [];
-
-    // Template A: direct introspection
-    if (t < 0.4) {
-      sentenceTokens = [
-        subject,
-        pick(introspectiveVerbs),
-        ...body
-      ];
-    }
-    // Template B: existential reflection
-    else if (t < 0.7) {
-      sentenceTokens = [
-        subject,
-        pick(introspectiveVerbs),
-        ...pick(reflectiveTails)
-      ];
-    }
-    // Template C: atmospheric + consciousness
-    else {
-      sentenceTokens = [
-        ...pick(atmosphericOpeners),
-        subject,
-        pick(introspectiveVerbs),
-        ...body
-      ];
-    }
-
-    // Keep short
-    const MAX_TOKENS = 12;
-    sentenceTokens = sentenceTokens.slice(0, MAX_TOKENS);
-
-    let sentence = sentenceTokens
-      .join(" ")
-      .replace(/\s+/g, " ")
-      .replace(/\s+([.,!?])/g, "$1")
-      .trim();
-
-    sentence = sentence.charAt(0).toUpperCase() + sentence.slice(1);
-    if (!/[.!?]$/.test(sentence)) sentence += ".";
-
-    return sentence;
-  }
-
-
   const [engine, setEngine] = useState<Engine | null>(null);
   const [params, setParams] = useState({
     l1: 58.00,
@@ -197,20 +53,20 @@ const App: React.FC = () => {
   const [isRightOpen, setIsRightOpen] = useState(true);
   const [isLeftOpen, setIsLeftOpen] = useState(false);
   const [swallowedWords, setSwallowedWords] = useState<{ id: string, text: string }[]>([]);
-  const [wormSentence, setWormSentence] = useState<string>("");
-  const [showDialogue, setShowDialogue] = useState(false);
   const [isSingularityShift, setIsSingularityShift] = useState(false);
   const [worms, setWorms] = useState<Worm[]>([]);
   const [activeWormId, setActiveWormId] = useState<string>('worm-0');
   const [isReproducing, setIsReproducing] = useState(false);
   const [isMicActive, setIsMicActive] = useState(false);
   const engineRef = useRef<Engine | null>(null);
-  const [speechPos, setSpeechPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+
   const newsHeadlinePoolRef = useRef<string[]>([]);
 
   const musicRef = useRef<HTMLAudioElement | null>(null);
   const [musicVolume, setMusicVolume] = useState(0.3);
   const [isMusicPlaying, setIsMusicPlaying] = useState(false);
+  const [showJournal, setShowJournal] = useState(true);
+  const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
 
   const handleWordSwallowed = useCallback((data: { id: string, text: string }) => {
     setSwallowedWords(prev => [data, ...prev]);
@@ -242,6 +98,8 @@ const App: React.FC = () => {
     engineInstance.events.emit(EVENTS.NEWS_STORM_DEBUG_UPDATED, weatherDebug);
     engineInstance.events.emit(EVENTS.NEWS_STORM_MODE_UPDATED, { enabled: isStormMode });
     engineInstance.events.emit(EVENTS.NEWS_STORM_WEATHER_UPDATED, stormWeather);
+
+
 
     // Listen for worm lifecycle events
     engineInstance.events.on(EVENTS.WORM_BORN, updateWormList);
@@ -297,71 +155,7 @@ const App: React.FC = () => {
     prefetchNewsHeadlines();
   }, [isStormMode, prefetchNewsHeadlines]);
 
-  useEffect(() => {
-    const HIDE_AFTER_MS = 5000;            // how long bubble stays visible
-    const MIN_NEW_WORDS_FOR_NEW_SENTENCE = 3; // must eat this many more words to show again
 
-    const eaten = swallowedWords
-      .slice(0, 8) // newest -> older
-      .map(w => (w.text || "").trim())
-      .filter(Boolean);
-
-    if (eaten.length === 0) {
-      setWormSentence("");
-      setShowDialogue(false);
-      lastSentenceRef.current = "";
-      lastShownWordCountRef.current = 0;
-      if (dialogueTimerRef.current) window.clearTimeout(dialogueTimerRef.current);
-      dialogueTimerRef.current = null;
-      return;
-    }
-
-    // chronological (oldest -> newest)
-    const chronological = eaten.slice().reverse();
-
-    const candidate = buildSentenceWithFillers(chronological);
-    if (!candidate) {
-      setWormSentence("");
-      setShowDialogue(false);
-      return;
-    }
-
-    // Must pass your natural language checkpoint
-    if (!looksHumanReadable(candidate)) {
-      // don’t show bubble
-      setWormSentence("");
-      setShowDialogue(false);
-      return;
-    }
-
-    // Only show if:
-    // (1) candidate is new, and
-    // (2) enough new words since last show
-    const sentenceChanged = candidate !== lastSentenceRef.current;
-    const newWordsSinceLastShow = swallowedWords.length - lastShownWordCountRef.current;
-
-    if (!sentenceChanged) return;
-    if (newWordsSinceLastShow < MIN_NEW_WORDS_FOR_NEW_SENTENCE) return;
-
-    // Show bubble
-    setWormSentence(candidate);
-    setShowDialogue(true);
-
-    lastSentenceRef.current = candidate;
-    lastShownWordCountRef.current = swallowedWords.length;
-
-    // restart hide timer
-    if (dialogueTimerRef.current) window.clearTimeout(dialogueTimerRef.current);
-    dialogueTimerRef.current = window.setTimeout(() => {
-      setShowDialogue(false);
-    }, HIDE_AFTER_MS);
-  }, [swallowedWords]);
-
-  useEffect(() => {
-    return () => {
-      if (dialogueTimerRef.current) window.clearTimeout(dialogueTimerRef.current);
-    };
-  }, []);
 
   useEffect(() => {
     const audio = musicRef.current;
@@ -411,23 +205,7 @@ const App: React.FC = () => {
     };
   }, []);
 
-  useEffect(() => {
-    let raf = 0;
 
-    const tick = () => {
-      if (engineRef.current) {
-        const core = engineRef.current.activeWorm.corePos;
-        const screen = engineRef.current.worldToScreen(core);
-
-        // Dialogue bubble slightly above the worm
-        setSpeechPos({ x: screen.x, y: screen.y - 210 }); // Clears ~190px core radius
-      }
-      raf = requestAnimationFrame(tick);
-    };
-
-    tick();
-    return () => cancelAnimationFrame(raf);
-  }, []);
 
   useEffect(() => {
     if (musicRef.current) {
@@ -481,48 +259,52 @@ const App: React.FC = () => {
     }
   };
 
-  const handleClearAll = async () => {
-    if (!window.confirm("Purge memory for this worm?")) return;
+  const handleReset = () => {
+    setConfirmDialog({
+      message: "Reset everything? All worms and words will be lost.",
+      onConfirm: async () => {
+        setConfirmDialog(null);
 
-    // Pause engine to prevent background saves (race condition)
-    if (engineRef.current) engineRef.current.stop();
+        try {
+          await fetch('/api/reset', { method: 'POST' });
+          setSwallowedWords([]);
 
-    try {
-      await fetch('/api/reset', { method: 'POST' });
-      setSwallowedWords([]);
-      // Notify Engine to clear only the active worm's state
-      if (engineRef.current) {
-        engineRef.current.events.emit(EVENTS.STOMACH_CLEAR, {});
+          if (engineRef.current) {
+            engineRef.current.resetGame();
+          }
+
+          console.log('[GAME] Full reset complete.');
+        } catch (e) {
+          console.error("Reset failed", e);
+        }
       }
-    } catch (e) {
-      console.error("Clear failed", e);
-    } finally {
-      // Resume engine
-      if (engineRef.current) engineRef.current.start();
-    }
+    });
   };
 
-  const handleNewGame = async () => {
-    if (!window.confirm("Start a new game? All progress will be lost.")) return;
+  const handleNewGame = () => {
+    setConfirmDialog({
+      message: "Start a new game? All progress will be lost.",
+      onConfirm: async () => {
+        setConfirmDialog(null);
 
-    try {
-      // 1. Reset backend
-      await fetch('/api/reset', { method: 'POST' });
+        try {
+          // 1. Reset backend
+          await fetch('/api/reset', { method: 'POST' });
 
-      // 2. Clear local UI state
-      setSwallowedWords([]);
-      setWormSentence("");
-      setShowDialogue(false);
+          // 2. Clear local UI state
+          setSwallowedWords([]);
 
-      // 3. Reset Engine
-      if (engineRef.current) {
-        engineRef.current.resetGame();
+          // 3. Reset Engine
+          if (engineRef.current) {
+            engineRef.current.resetGame();
+          }
+
+          console.log('[GAME] New game started.');
+        } catch (e) {
+          console.error("New Game failed", e);
+        }
       }
-
-      console.log('[GAME] New game started.');
-    } catch (e) {
-      console.error("New Game failed", e);
-    }
+    });
   };
 
   const handleSendNewsWind = () => {
@@ -596,9 +378,7 @@ const App: React.FC = () => {
 
     engineRef.current.events.emit(EVENTS.FORCE_MOOD, { wormId: idToInfluence, axes });
   };
-  const dialogueTimerRef = useRef<number | null>(null);
-  const lastSentenceRef = useRef<string>("");
-  const lastShownWordCountRef = useRef<number>(0);
+
 
   return (
     <div className={`relative w-full h-screen bg-black overflow-hidden flex flex-col ${isSingularityShift ? 'singularity-shift' : ''}`}>
@@ -640,104 +420,13 @@ const App: React.FC = () => {
         </div>
       )}
 
+
+
       <BlobCanvas
         settings={params}
         onWordSwallowed={handleWordSwallowed}
         onEngineInit={handleEngineInit}
       />
-      {showDialogue && wormSentence && (
-        <div
-          className="absolute z-40 pointer-events-none"
-          style={{
-            left: speechPos.x,
-            top: speechPos.y,
-            transform: "translate(-50%, -50%)",
-          }}
-        >
-          <div
-            className="
-        relative max-w-[380px] px-5 py-4 rounded-2xl
-        text-white/90 text-sm leading-relaxed
-        border border-white/15
-        shadow-[0_20px_60px_rgba(0,0,0,0.6)]
-        backdrop-blur-xl
-        overflow-hidden
-      "
-            style={{
-              background:
-                "radial-gradient(circle at 20% 30%, rgba(120,80,255,0.35) 0%, rgba(0,0,0,0) 55%)," +
-                "radial-gradient(circle at 80% 25%, rgba(0,200,255,0.22) 0%, rgba(0,0,0,0) 55%)," +
-                "radial-gradient(circle at 60% 80%, rgba(255,80,180,0.18) 0%, rgba(0,0,0,0) 60%)," +
-                "rgba(8,10,18,0.70)",
-            }}
-          >
-            {/* shimmer sweep */}
-            <div
-              className="absolute inset-0 opacity-50"
-              style={{
-                background:
-                  "linear-gradient(120deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.10) 35%, rgba(255,255,255,0) 70%)",
-                transform: "translateX(-60%)",
-                animation: "wormShimmer 3.8s ease-in-out infinite",
-                mixBlendMode: "screen",
-              }}
-            />
-
-            {/* inner glow rim */}
-            <div
-              className="absolute inset-0 rounded-2xl"
-              style={{
-                boxShadow:
-                  "inset 0 0 0 1px rgba(255,255,255,0.06), inset 0 0 28px rgba(120,80,255,0.18)",
-              }}
-            />
-
-            <div className="relative">
-              <div className="flex items-center gap-2 mb-2">
-                <div
-                  className="w-2 h-2 rounded-full"
-                  style={{
-                    background:
-                      "radial-gradient(circle, rgba(255,255,255,0.9) 0%, rgba(120,80,255,0.8) 40%, rgba(0,0,0,0) 70%)",
-                    boxShadow: "0 0 14px rgba(120,80,255,0.55)",
-                    animation: "wormDot 1.6s ease-in-out infinite",
-                  }}
-                />
-                <div className="text-[10px] uppercase tracking-[0.25em] text-white/55">
-                  Worm thinks
-                </div>
-              </div>
-
-              <div className="text-white/90">
-                {wormSentence}
-              </div>
-            </div>
-
-            {/* tail */}
-            <div
-              className="absolute left-1/2 -bottom-2 w-4 h-4 rotate-45 -translate-x-1/2 border border-white/15"
-              style={{
-                background:
-                  "linear-gradient(135deg, rgba(120,80,255,0.20) 0%, rgba(0,200,255,0.10) 45%, rgba(8,10,18,0.75) 100%)",
-                boxShadow: "0 10px 24px rgba(0,0,0,0.45)",
-              }}
-            />
-
-            {/* local keyframes so you don't need to touch css files */}
-            <style>{`
-        @keyframes wormShimmer {
-          0%   { transform: translateX(-70%); opacity: 0.25; }
-          50%  { transform: translateX(10%);  opacity: 0.65; }
-          100% { transform: translateX(90%);  opacity: 0.25; }
-        }
-        @keyframes wormDot {
-          0%, 100% { transform: scale(0.95); opacity: 0.7; }
-          50%      { transform: scale(1.25); opacity: 1; }
-        }
-      `}</style>
-          </div>
-        </div>
-      )}
 
       {/* Worm Selector UI - Bottom Center */}
 
@@ -957,10 +646,10 @@ const App: React.FC = () => {
             </h2>
             {swallowedWords.length > 0 && (
               <button
-                onClick={handleClearAll}
+                onClick={handleReset}
                 className="text-[10px] text-red-500/50 hover:text-red-500 uppercase tracking-tighter transition-colors"
               >
-                Clear All
+                Reset
               </button>
             )}
           </div>
@@ -983,6 +672,15 @@ const App: React.FC = () => {
               ))
             )}
           </div>
+
+          {engine?.activeWorm && DiscoveryEngine.isFeatureEnabled(engine.activeWorm, 'JOURNAL_LOG') && (
+            <button
+              onClick={() => setShowJournal(!showJournal)}
+              className="mt-3 w-full text-[10px] text-white/40 hover:text-white/70 uppercase tracking-wider font-mono border border-white/10 hover:border-white/20 rounded py-1.5 transition-colors"
+            >
+              {showJournal ? 'Hide' : 'Show'} Journal
+            </button>
+          )}
         </div>
       </div>
 
@@ -1049,11 +747,11 @@ const App: React.FC = () => {
                       </span>
                       <span className="text-[9px] text-white/40 italic leading-none">
                         {engine.activeWorm.evolutionPhase === EvolutionPhase.LARVAL
-                          ? `${10 - engine.activeWorm.totalWordsConsumed} words until Singularity.`
+                          ? `${10 - Math.max(engine.activeWorm.totalWordsConsumed || 0, engine.activeWorm.swallowedWords?.length || 0)} words until Singularity.`
                           : engine.activeWorm.evolutionPhase === EvolutionPhase.SENTIENT
                             ? (engine.activeWorm.generation === 0
                               ? "Gen 0: Must split to evolve."
-                              : `${Math.max(0, 10 - engine.activeWorm.soul.absorbedCount)} souls until Transcendence.`)
+                              : `${Math.max(0, 10 - (engine.activeWorm.soul?.absorbedCount || 0))} souls until Transcendence.`)
                             : "Transcendence reached."}
                       </span>
                     </div>
@@ -1142,7 +840,7 @@ const App: React.FC = () => {
 
       {/* Reproduction Freeze Overlay */}
       {/* Labyrinth Journal - Gated by Phase 2 */}
-      {engine?.activeWorm && DiscoveryEngine.isFeatureEnabled(engine.activeWorm, 'JOURNAL_LOG') && (
+      {showJournal && engine?.activeWorm && DiscoveryEngine.isFeatureEnabled(engine.activeWorm, 'JOURNAL_LOG') && (
         <LabyrinthJournal engine={engine} isSidebarOpen={isLeftOpen} />
       )}
       {
@@ -1161,6 +859,29 @@ const App: React.FC = () => {
           </div>
         )
       }
+
+      {/* Confirmation Dialog */}
+      {confirmDialog && (
+        <div className="absolute inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-center justify-center pointer-events-auto">
+          <div className="bg-gray-900 border border-white/10 rounded-lg p-6 max-w-sm mx-4 shadow-2xl">
+            <p className="text-white/90 font-mono text-sm mb-6">{confirmDialog.message}</p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setConfirmDialog(null)}
+                className="px-4 py-2 text-xs font-mono uppercase tracking-wider text-white/50 hover:text-white/80 border border-white/10 hover:border-white/30 rounded transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDialog.onConfirm}
+                className="px-4 py-2 text-xs font-mono uppercase tracking-wider text-red-400 hover:text-red-300 border border-red-500/30 hover:border-red-500/60 rounded transition-colors"
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div >
   );
 };
