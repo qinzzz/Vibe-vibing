@@ -11,6 +11,8 @@ export class Engine {
     config: GameConfig;
     events: EventBus;
 
+    lastStoryState: any = null; // Cached for late-mounting components
+
     private systems: System[] = [];
     private animationId: number | null = null;
     private lastTime: number = 0;
@@ -160,14 +162,29 @@ export class Engine {
     }
 
     private draw() {
-        this.ctx.fillStyle = '#000';
-        this.ctx.fillRect(0, 0, this.width, this.height);
+        const ctx = this.ctx;
+        const w = this.width;
+        const h = this.height;
+        const t = performance.now() * 0.001;
+        const activeWorm = this.wormState.worms.get(this.wormState.activeWormId);
+        const insanity = activeWorm ? 1 - (activeWorm.sanity / 100) : 0; // 0 = sane, 1 = mad
 
-        this.ctx.save();
-        this.ctx.translate(this.width / 2 - this.cameraPos.x, this.height / 2 - this.cameraPos.y);
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, w, h);
+
+        ctx.save();
+
+        // Wobble: sinusoidal camera shake when insanity > 0.3
+        let wobbleX = 0;
+        let wobbleY = 0;
+        if (insanity > 0.3) {
+            wobbleX = Math.sin(t * 3.7) * (insanity - 0.3) * 12;
+            wobbleY = Math.cos(t * 2.3) * (insanity - 0.3) * 8;
+        }
+
+        ctx.translate(w / 2 - this.cameraPos.x + wobbleX, h / 2 - this.cameraPos.y + wobbleY);
 
         for (const system of this.systems) {
-            const activeWorm = this.wormState.worms.get(this.wormState.activeWormId);
             if (activeWorm) {
                 let feature: FeatureKey | null = null;
                 if (system.constructor.name === 'BlackHoleSystem') feature = 'BLACK_HOLE';
@@ -176,10 +193,26 @@ export class Engine {
 
                 if (feature && !DiscoveryEngine.isFeatureEnabled(activeWorm, feature)) continue;
             }
-            system.draw(this.ctx);
+            system.draw(ctx);
         }
 
-        this.ctx.restore();
+        ctx.restore();
+
+        // CSS filter on canvas element: hue rotation + desaturation
+        if (insanity > 0.15) {
+            this.canvas.style.filter = `hue-rotate(${Math.sin(t * 2) * insanity * 25}deg) saturate(${1 - insanity * 0.4})`;
+        } else {
+            this.canvas.style.filter = '';
+        }
+
+        // Vignette overlay (insanity > 0.5) — drawn in screen space after ctx.restore()
+        if (insanity > 0.5) {
+            const gradient = ctx.createRadialGradient(w / 2, h / 2, w * 0.25, w / 2, h / 2, w * 0.65);
+            gradient.addColorStop(0, 'rgba(0,0,0,0)');
+            gradient.addColorStop(1, `rgba(20,0,30,${(insanity - 0.5) * 0.8})`);
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, w, h);
+        }
     }
 
     private updateCamera() {
@@ -272,8 +305,10 @@ export class Engine {
             speedMultiplier: parent ? parent.speedMultiplier * (0.95 + Math.random() * 0.1) : 1.0,
 
             // Lifecycle
-            satiation: parent ? 50 : 100, // Children start half-full
-            health: 100,
+            sanity: parent ? 60 : 100,
+            inStream: false,
+            streamProximity: 0,
+            streamDirection: 0,
             lastMeal: Date.now(),
 
             // State
@@ -292,6 +327,7 @@ export class Engine {
             evolutionPhase: EvolutionPhase.LARVAL,
             totalWordsConsumed: 0,
             hasProvedSentience: false,
+            storyRevealedCount: 0,
             coreRadius: parent ? parent.coreRadius * 0.8 : this.config.coreRadius, // Children start slightly smaller than current parent
             hipRadius: parent ? parent.hipRadius * 0.8 : this.config.hipRadius
         };

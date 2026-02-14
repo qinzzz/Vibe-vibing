@@ -51,6 +51,11 @@ export class GameDirector implements System {
         worm.evolutionPhase = nextPhase;
         console.log(`[EVOLUTION] Worm ${worm.id} evolved to ${EvolutionPhase[nextPhase]}!`);
 
+        // Reset sanity on phase transition
+        if (nextPhase === EvolutionPhase.SENTIENT) {
+            worm.sanity = 100;
+        }
+
         // Emit event for UI or other systems
         this.engine.events.emit(EVENTS.WORM_EVOLVED, { wormId: worm.id, level: nextPhase });
     }

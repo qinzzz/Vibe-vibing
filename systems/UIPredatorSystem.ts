@@ -43,7 +43,7 @@ export class UIPredatorSystem implements System {
         const worm = this.engine.activeWorm;
 
         // --- Gated by Deity Phase (using BLACK_HOLE as proxy) ---
-        if (!DiscoveryEngine.isFeatureEnabled(worm, 'BLACK_HOLE') || worm.health >= 20) {
+        if (!DiscoveryEngine.isFeatureEnabled(worm, 'BLACK_HOLE') || worm.sanity >= 30) {
             if (this.isGlitching) {
                 this.cleanup(); // Stop glitching if healthy or not deity
                 this.isGlitching = false;
@@ -57,8 +57,8 @@ export class UIPredatorSystem implements System {
         // --- Voice Soothing Logic ---
         if (this.sootheMultiplier > 0) {
             // Heal the worm
-            worm.health += 0.05 * (dtMs / 16);
-            if (worm.health > 100) worm.health = 100;
+            worm.sanity += 0.05 * (dtMs / 16);
+            if (worm.sanity > 100) worm.sanity = 100;
 
             // Reduce soothe effect over time
             this.sootheMultiplier -= 0.01 * (dtMs / 16); // Also slow down decay
@@ -84,11 +84,11 @@ export class UIPredatorSystem implements System {
             this.hungerTimer = 0;
 
             const complaints = [
-                "FEED ME...",
-                "THE VOID HUNGERS...",
-                "MORE WORDS...",
-                "I AM EMPTY...",
-                "SOOTHE ME..."
+                "THE WORDS... THEY BURN...",
+                "REALITY IS DISSOLVING...",
+                "CAN'T REMEMBER... WHO...",
+                "THE STREAM... FIND THE STREAM...",
+                "LOSING MYSELF..."
             ];
             const text = complaints[Math.floor(Math.random() * complaints.length)];
 

@@ -3,7 +3,8 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from "@google/genai";
 import OpenAI from 'openai';
-import { saveWord, saveWordsBatch, getStomachContent, deleteWord, clearStomach, saveWorm, getWorms, deleteWorm, deleteWormWords, saveGeneratedContent, getCachedContent, saveThoughtFragment, getThoughtFragments, clearAllWorms } from './db';
+import db, { saveWord, saveWordsBatch, getStomachContent, deleteWord, clearStomach, saveWorm, getWorms, deleteWorm, deleteWormWords, saveGeneratedContent, getCachedContent, saveThoughtFragment, getThoughtFragments, clearAllWorms, saveStoryOutline, getStoryOutline, markStoryComplete, deleteStoryForWorm, saveStoryFragment, getStoryFragments, getRevealedSegmentCount, markKeywordSpoken, getSpokenKeywords, clearSpokenKeywords, saveGeneratedStory } from './db';
+import { getStoryTemplate, type StoryTemplate } from './storyTemplates';
 import { generatePsychedelicDiary } from './psychedelicGenerator';
 import path from 'path';
 import fs from 'fs';
@@ -115,24 +116,34 @@ let newsCacheSource: 'gdelt' | 'fallback' = 'fallback';
 let newsCacheFetchedAt = 0;
 
 // --- AI Quota & Reliability Management ---
-// We rotate through models to maximize free tier usage across different quotas
-const GEMINI_MODELS = [
-    'gemini-2.5-flash',
-    'gemini-2.0-flash',
-];
+// Two model tiers: 'fast' for quick tasks (thoughts), 'advanced' for heavy generation (story, paragraphs)
+type ModelTier = 'fast' | 'advanced';
+
+const GEMINI_MODELS: Record<ModelTier, string[]> = {
+    fast: ['gemini-2.5-flash-lite'],
+    advanced: ['gemini-3-flash-preview'],
+};
 const providerState = {
-    gemini: { exhaustedUntil: 0, lastModelIndex: 0, failureCount: 0 },
+    gemini: {
+        fast: { exhaustedUntil: 0, lastModelIndex: 0, failureCount: 0 },
+        advanced: { exhaustedUntil: 0, lastModelIndex: 0, failureCount: 0 },
+    },
     openai: { exhaustedUntil: 0 }
 };
 
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+// In-memory generation progress tracker (wormId → current phase 0-4)
+const generationProgress: Record<string, number> = {};
+
 // Helper: Generate text with selected AI provider & robust fallbacks
-async function generateText(prompt: string, context: string, retryCount = 0): Promise<string> {
+// tier: 'fast' for thoughts/quick tasks, 'advanced' for story generation/paragraphs
+async function generateText(prompt: string, context: string, retryCount = 0, tier: ModelTier = 'fast'): Promise<string> {
     const now = Date.now();
+    const geminiTier = providerState.gemini[tier];
 
     // 1. Check for API key presence
-    const hasGemini = geminiKey && geminiKey !== 'your_key_here' && providerState.gemini.exhaustedUntil < now;
+    const hasGemini = geminiKey && geminiKey !== 'your_key_here' && geminiTier.exhaustedUntil < now;
     const hasOpenAI = openaiKey && openaiKey !== 'your_key_here' && providerState.openai.exhaustedUntil < now;
 
     // Determine which provider to try first based on config and state
@@ -168,8 +179,9 @@ async function generateText(prompt: string, context: string, retryCount = 0): Pr
             text = response.choices[0]?.message?.content || '';
         } else if (hasGemini) {
             // Try different models if one fails (handled in catch, but we start with last known good or default)
-            const modelToUse = GEMINI_MODELS[providerState.gemini.lastModelIndex % GEMINI_MODELS.length];
-            console.log(`[AI] Attempting ${modelToUse} for ${context} (Index: ${providerState.gemini.lastModelIndex})`);
+            const tierModels = GEMINI_MODELS[tier];
+            const modelToUse = tierModels[geminiTier.lastModelIndex % tierModels.length];
+            console.log(`[AI] Attempting ${modelToUse} for ${context} [tier=${tier}] (Index: ${geminiTier.lastModelIndex})`);
 
             const response = await genAI.models.generateContent({
                 model: modelToUse,
@@ -177,7 +189,7 @@ async function generateText(prompt: string, context: string, retryCount = 0): Pr
             });
             text = response.text || '';
             // Success: reset failure count
-            providerState.gemini.failureCount = 0;
+            geminiTier.failureCount = 0;
         } else {
             // No keys available and cache missed
             throw new Error('NO_KEYS_AVAILABLE');
@@ -197,28 +209,29 @@ async function generateText(prompt: string, context: string, retryCount = 0): Pr
             errorMsg.includes('quota') ||
             stack.includes('429');
 
-        const currentModel = primaryProvider === 'gemini' ? GEMINI_MODELS[providerState.gemini.lastModelIndex % GEMINI_MODELS.length] : openaiModel;
-        console.error(`[AI] Error during generation (${context}) [Model: ${currentModel}] [Attempt ${retryCount + 1}]:`, errorMsg);
+        const tierModels = GEMINI_MODELS[tier];
+        const currentModel = primaryProvider === 'gemini' ? tierModels[geminiTier.lastModelIndex % tierModels.length] : openaiModel;
+        console.error(`[AI] Error during generation (${context}) [Model: ${currentModel}] [tier=${tier}] [Attempt ${retryCount + 1}]:`, errorMsg);
 
         // A. Handle Quota (429) - Switch Model or Provider
-        if (isQuotaError && retryCount < 5) { // Increased retries to cycle more models
+        if (isQuotaError && retryCount < 5) {
             if (primaryProvider === 'gemini') {
-                providerState.gemini.lastModelIndex++; // Move to next model
-                providerState.gemini.failureCount++;
-                console.log(`[AI] Gemini Quota Hit (${currentModel}). Rotating to: ${GEMINI_MODELS[providerState.gemini.lastModelIndex % GEMINI_MODELS.length]}`);
+                geminiTier.lastModelIndex++;
+                geminiTier.failureCount++;
+                console.log(`[AI] Gemini Quota Hit (${currentModel}). Rotating to: ${tierModels[geminiTier.lastModelIndex % tierModels.length]}`);
 
-                // If we've tried all models, mark gemini as exhausted for a while
-                if (providerState.gemini.failureCount >= GEMINI_MODELS.length) {
-                    console.warn('[AI] All Gemini models likely exhausted. Cooling down Gemini for 2 mins.');
-                    providerState.gemini.exhaustedUntil = now + (2 * 60 * 1000);
+                // If we've tried all models in this tier, mark exhausted
+                if (geminiTier.failureCount >= tierModels.length) {
+                    console.warn(`[AI] All Gemini ${tier} models exhausted. Cooling down for 2 mins.`);
+                    geminiTier.exhaustedUntil = now + (2 * 60 * 1000);
                 }
 
-                await wait(500 * (retryCount + 1)); // Increased backoff
-                return generateText(prompt, context, retryCount + 1);
+                await wait(500 * (retryCount + 1));
+                return generateText(prompt, context, retryCount + 1, tier);
             } else {
                 console.warn('[AI] OpenAI Quota Hit. Cooling down OpenAI for 5 mins.');
                 providerState.openai.exhaustedUntil = now + (5 * 60 * 1000);
-                return generateText(prompt, context, retryCount + 1); // Will fall back to gemini or cache
+                return generateText(prompt, context, retryCount + 1, tier);
             }
         }
 
@@ -902,8 +915,7 @@ app.post('/api/worms', (req, res) => {
             thickness: worm.thickness ?? 0.25,
             speedMultiplier: worm.speedMultiplier ?? 1.0,
             birthTime: worm.birthTime ?? Date.now(),
-            satiation: worm.satiation ?? 50,
-            health: worm.health ?? 100,
+            sanity: worm.sanity ?? 100,
             lastMeal: worm.lastMeal ?? Date.now(),
             evolutionPhase: worm.evolutionPhase ?? 0,
             totalWordsConsumed: worm.total_words_consumed || 0
@@ -960,9 +972,495 @@ function filterThought(text: string, vocab: string[]): string {
     return filtered.join(' ');
 }
 
-// 3. AI Thought (Proxy)
+// --- Story Weaving System (v2: keyword-gated, preset templates) ---
+
+// Generation progress polling endpoint
+app.get('/api/story/generation-progress/:wormId', (req, res) => {
+    const phase = generationProgress[req.params.wormId] ?? -1;
+    res.json({ phase });
+});
+
+// Generate story from user identity input (AI-powered)
+app.post('/api/story/generate-from-identity', async (req, res) => {
+    const { wormId, identity } = req.body;
+    if (!wormId) return res.status(400).json({ error: 'wormId required' });
+    if (!identity || typeof identity !== 'string' || identity.trim().length < 3) {
+        return res.status(400).json({ error: 'identity required (min 3 chars)' });
+    }
+
+    const trimmedIdentity = identity.trim().substring(0, 200);
+    console.log(`[STORY-GEN] Starting identity-based generation for ${wormId}: "${trimmedIdentity}"`);
+
+    try {
+        // Check if story already exists for this worm
+        const existing = getStoryOutline(wormId);
+        if (existing) {
+            const template = getStoryTemplate(existing.template_id);
+            if (!template) {
+                // Stale outline pointing to a deleted template — delete and regenerate
+                console.warn(`[STORY-GEN] Stale outline for ${wormId}, template ${existing.template_id} not found. Deleting.`);
+                deleteStoryForWorm(wormId);
+            } else {
+                const fragments = getStoryFragments(existing.id);
+                const spokenKws = getSpokenKeywords(wormId);
+                const vocabRows = getStomachContent().filter(w => w.worm_id === wormId);
+                const vocabSet = new Set(vocabRows.map(w => w.text.toLowerCase().replace(/[^a-z0-9]/g, '')));
+                const spokenSet = new Set(spokenKws);
+                const revealedIndices = new Set(fragments.map(f => f.segment_index));
+
+                console.log(`[STORY-GEN] Story already exists for ${wormId}, returning existing`);
+                return res.json({
+                    storyId: existing.id,
+                    templateId: template.id,
+                    title: template.title,
+                    tagline: template.tagline || '',
+                    totalSegments: template.segments.length,
+                    segments: template.segments.map(seg => ({
+                        index: seg.index,
+                        hint: seg.hint,
+                        narrative: revealedIndices.has(seg.index) ? seg.narrative : null,
+                        debugNarrative: seg.narrative,
+                        revealed: revealedIndices.has(seg.index),
+                        keywordProgress: seg.keywords.map(kw => ({
+                            keyword: kw.substring(0, 2) + '___',
+                            fullKeyword: kw,
+                            inVocab: vocabSet.has(kw.toLowerCase().replace(/[^a-z0-9]/g, '')),
+                            spoken: spokenSet.has(kw.toLowerCase()),
+                        })),
+                    })),
+                    fragments,
+                    streamFragments: template.streamFragments,
+                });
+            }
+        }
+
+        // --- Phase 1: Generate Story Outline ---
+        const outlinePrompt = `You are a story architect for a mystery game. The player was once a human who died, lost their memory, and now exists as a formless entity in a void. Their goal is to recover fragments of their past life by collecting keywords.
+
+The human's identity: "${trimmedIdentity}"
+
+Generate a mysterious, suspenseful story about key events in this person's life.
+
+STRUCTURE:
+- Title: max 6 words, evocative
+- Setting: 2-3 sentences describing the atmosphere/world
+- 10 segments forming a narrative arc:
+  - 0-2: DISCOVERY — who they were, their world
+  - 3-5: TENSION — conflicts, secrets, growing unease
+  - 6-7: TWIST — a revelation that changes everything
+  - 8-9: RESOLUTION — the truth about their death/transformation
+
+KEYWORD RULES:
+- Segments 0-6: exactly 1 keyword each
+- Segments 7-9: exactly 2 keywords each (13 total keywords)
+- Keywords: common English nouns/adjectives, 4-8 letters
+- NO proper nouns, NO verbs, NO words under 4 letters
+- Good: "mirror", "garden", "silver", "flame", "shadow"
+
+Each segment needs:
+- "keywords": array of strings
+- "hint": locked teaser with blanks (max 50 chars)
+- "narrative": full text when unlocked (40-80 words, atmospheric, first-person retrospective)
+
+Also generate a "tagline": a single evocative sentence (max 80 chars) describing this character's identity — poetic, mysterious, hinting at who they were.
+
+Respond ONLY with valid JSON:
+{ "title": "...", "tagline": "...", "setting": "...", "segments": [ { "index": 0, "keywords": ["..."], "hint": "...", "narrative": "..." }, { "index": 1, "keywords": ["..."], "hint": "...", "narrative": "..." }, { "index": 2, "keywords": ["..."], "hint": "...", "narrative": "..." }, { "index": 3, "keywords": ["..."], "hint": "...", "narrative": "..." }, { "index": 4, "keywords": ["..."], "hint": "...", "narrative": "..." }, { "index": 5, "keywords": ["..."], "hint": "...", "narrative": "..." }, { "index": 6, "keywords": ["..."], "hint": "...", "narrative": "..." }, { "index": 7, "keywords": ["...", "..."], "hint": "...", "narrative": "..." }, { "index": 8, "keywords": ["...", "..."], "hint": "...", "narrative": "..." }, { "index": 9, "keywords": ["...", "..."], "hint": "...", "narrative": "..." } ] }`;
+
+        generationProgress[wormId] = 1;
+        console.log('[STORY-GEN] Phase 1: Generating story outline...');
+        const outlineRaw = await generateText(outlinePrompt, 'story_outline_gen', 0, 'advanced');
+        const outlineMatch = outlineRaw.trim().match(/\{[\s\S]*\}/);
+        if (!outlineMatch) throw new Error('Failed to parse outline JSON');
+        const outline = JSON.parse(outlineMatch[0]);
+
+        if (!outline.title || !outline.setting || !Array.isArray(outline.segments) || outline.segments.length < 10) {
+            throw new Error('Invalid outline structure');
+        }
+
+        // Extract all keywords for Phase 2
+        const allKeywords: string[] = outline.segments.flatMap((s: any) => s.keywords.map((k: string) => k.toLowerCase()));
+        console.log(`[STORY-GEN] Phase 1 complete. Title: "${outline.title}", Tagline: "${outline.tagline || ''}", Keywords: [${allKeywords.join(', ')}]`);
+
+        // --- Phase 2 & 3: Background Texts + Stream Fragments (parallel) ---
+        const bgPrompt = `Generate 20 short journal-like entries (15-35 words each) written as fragmented personal memories from someone who was: "${trimmedIdentity}".
+
+Setting: ${outline.setting}
+
+These should read like torn diary pages, personal notes, half-remembered observations from daily life — grounded and specific to this person's world, not poetic or literary. Use concrete sensory details: smells, sounds, textures, names of places or objects relevant to their life.
+
+Examples of tone: "The floorboards in the back room always creaked at 3am. I never found out why." or "She left the garden gate open again. The dog tracked mud through the kitchen."
+
+CRITICAL: These keywords MUST each appear as a standalone word in at least 2 different entries: [${allKeywords.join(', ')}]
+
+Weave keywords into the journal entries naturally, as part of the person's everyday observations and memories.
+
+Respond ONLY with a JSON array of 20 strings.`;
+
+        const streamPrompt = `Generate 15 consciousness stream entries for a mystery game. Mix of: diary entries, newspaper clippings, radio transcripts, letters, police reports, unknown voices.
+
+Identity: ${trimmedIdentity}
+Setting: ${outline.setting}
+
+1-2 sentences each. First 5: grounded/mundane. Middle 5: mysterious. Last 5: surreal.
+
+Respond ONLY with a JSON array of 15 strings.`;
+
+        generationProgress[wormId] = 2;
+        console.log('[STORY-GEN] Phase 2 & 3: Generating background texts and stream fragments...');
+        const [bgRaw, streamRaw] = await Promise.all([
+            generateText(bgPrompt, 'story_bg_gen', 0, 'advanced'),
+            generateText(streamPrompt, 'story_stream_gen', 0, 'advanced'),
+        ]);
+
+        // Parse background texts
+        let backgroundTexts: string[] = [];
+        try {
+            const bgMatch = bgRaw.trim().match(/\[[\s\S]*\]/);
+            if (bgMatch) backgroundTexts = JSON.parse(bgMatch[0]);
+        } catch (e) {
+            console.warn('[STORY-GEN] Failed to parse background texts, using empty array');
+        }
+        if (!Array.isArray(backgroundTexts) || backgroundTexts.length < 5) {
+            throw new Error('Insufficient background texts generated');
+        }
+
+        // Parse stream fragments
+        let streamTexts: string[] = [];
+        try {
+            const streamMatch = streamRaw.trim().match(/\[[\s\S]*\]/);
+            if (streamMatch) streamTexts = JSON.parse(streamMatch[0]);
+        } catch (e) {
+            console.warn('[STORY-GEN] Failed to parse stream fragments, using fallback');
+        }
+        if (!Array.isArray(streamTexts) || streamTexts.length < 5) {
+            streamTexts = [
+                'A fragment of memory surfaces, then dissolves.',
+                'Something was written here once. The ink has faded.',
+                'A voice, half-remembered, whispers from the dark.',
+                'The past is a room with no doors.',
+                'Who were you before the silence?',
+            ];
+        }
+
+        generationProgress[wormId] = 3;
+        // --- Phase 4: Validation — ensure every keyword appears in 2+ paragraphs ---
+        const validateAndPatchKeywords = (texts: string[], keywords: string[]): string[] => {
+            const patched = [...texts];
+            for (const kw of keywords) {
+                const regex = new RegExp(`\\b${kw}\\b`, 'i');
+                let count = 0;
+                for (const t of patched) {
+                    if (regex.test(t)) count++;
+                }
+                while (count < 2) {
+                    const clauses = [
+                        `The ${kw} lingered at the edge of memory, refusing to fade.`,
+                        `Something about the ${kw} felt important, though the reason had been lost.`,
+                        `In the distance, a ${kw} emerged from the fog of forgotten things.`,
+                        `The word "${kw}" echoed through the void, carrying the weight of a lost life.`,
+                    ];
+                    const clause = clauses[Math.floor(Math.random() * clauses.length)];
+                    const idx = Math.floor(Math.random() * patched.length);
+                    patched.push(clause);
+                    count++;
+                    console.log(`[STORY-GEN] Patched missing keyword "${kw}" (now ${count} occurrences)`);
+                }
+            }
+            return patched;
+        };
+
+        backgroundTexts = validateAndPatchKeywords(backgroundTexts, allKeywords);
+        generationProgress[wormId] = 4;
+        console.log(`[STORY-GEN] Phase 4 complete. ${backgroundTexts.length} background paragraphs after validation.`);
+
+        // --- Build the full StoryTemplate ---
+        const streamFragments = streamTexts.map((text, i) => ({
+            id: `sf-gen-${i}`,
+            text,
+            source: i < 5 ? 'Archive' : i < 10 ? 'Unknown Signal' : 'Unknown Voice',
+            timestamp: 0,
+        }));
+
+        const templateData: StoryTemplate = {
+            id: '', // Will be set after DB save
+            title: outline.title,
+            tagline: outline.tagline || '',
+            setting: outline.setting,
+            backgroundTexts,
+            streamFragments,
+            segments: outline.segments.map((seg: any, i: number) => ({
+                index: i,
+                keywords: seg.keywords.map((k: string) => k.toLowerCase()),
+                hint: seg.hint,
+                narrative: seg.narrative,
+            })),
+        };
+
+        // Save to DB — first with placeholder, then update with the real id
+        const genId = saveGeneratedStory(trimmedIdentity, '{}');
+        const templateId = `generated-${genId}`;
+        const finalTemplate = { ...templateData, id: templateId };
+        db.prepare('UPDATE generated_stories SET template_json = ? WHERE id = ?').run(JSON.stringify(finalTemplate), genId);
+
+        // Save story outline
+        const storyId = saveStoryOutline(wormId, finalTemplate.title, finalTemplate.segments.length, templateId);
+
+        console.log(`[STORY-GEN] Story generation complete! genId=${genId}, templateId=${templateId}, storyId=${storyId}`);
+
+        // Return same shape as /api/story/generate
+        res.json({
+            storyId,
+            templateId,
+            title: finalTemplate.title,
+            tagline: finalTemplate.tagline || '',
+            totalSegments: finalTemplate.segments.length,
+            segments: finalTemplate.segments.map(seg => ({
+                index: seg.index,
+                hint: seg.hint,
+                narrative: null,
+                debugNarrative: seg.narrative,
+                revealed: false,
+                keywordProgress: seg.keywords.map(kw => ({
+                    keyword: kw.substring(0, 2) + '___',
+                    fullKeyword: kw,
+                    inVocab: false,
+                    spoken: false,
+                })),
+            })),
+            fragments: [],
+            streamFragments: finalTemplate.streamFragments,
+        });
+        delete generationProgress[wormId];
+    } catch (err: any) {
+        console.error('[STORY-GEN] Generation failed:', err.message || err);
+        delete generationProgress[wormId];
+        res.status(500).json({ error: 'Story generation failed. Please try again.' });
+    }
+});
+
+// Generate story with default identity (used when user skips identity input)
+app.post('/api/story/generate', async (req, res) => {
+    const { wormId } = req.body;
+    if (!wormId) return res.status(400).json({ error: 'wormId required' });
+
+    // If generation is already in progress (e.g. from identity-based flow), don't start another
+    if (generationProgress[wormId] != null) {
+        console.log(`[STORY] Generation already in progress for ${wormId}, skipping default generation`);
+        return res.json({ inProgress: true });
+    }
+
+    // Check if story already exists
+    const existing = getStoryOutline(wormId);
+    if (existing) {
+        const template = getStoryTemplate(existing.template_id);
+        if (template) {
+            const fragments = getStoryFragments(existing.id);
+            const spokenKws = getSpokenKeywords(wormId);
+            const vocabRows = getStomachContent().filter(w => w.worm_id === wormId);
+            const vocabSet = new Set(vocabRows.map(w => w.text.toLowerCase().replace(/[^a-z0-9]/g, '')));
+            const spokenSet = new Set(spokenKws);
+            const revealedIndices = new Set(fragments.map(f => f.segment_index));
+
+            console.log(`[STORY] Story already exists for ${wormId}, returning existing (id=${existing.id})`);
+            return res.json({
+                storyId: existing.id,
+                templateId: template.id,
+                title: template.title,
+                tagline: template.tagline || '',
+                totalSegments: template.segments.length,
+                segments: template.segments.map(seg => ({
+                    index: seg.index,
+                    hint: seg.hint,
+                    narrative: revealedIndices.has(seg.index) ? seg.narrative : null,
+                    debugNarrative: seg.narrative,
+                    revealed: revealedIndices.has(seg.index),
+                    keywordProgress: seg.keywords.map(kw => ({
+                        keyword: kw.substring(0, 2) + '___',
+                        fullKeyword: kw,
+                        inVocab: vocabSet.has(kw.toLowerCase().replace(/[^a-z0-9]/g, '')),
+                        spoken: spokenSet.has(kw.toLowerCase()),
+                    })),
+                })),
+                fragments,
+                streamFragments: template.streamFragments,
+            });
+        }
+        // Stale outline — delete and regenerate below
+        deleteStoryForWorm(wormId);
+    }
+
+    // No preset template — generate with a default identity
+    const defaultIdentity = 'a wanderer lost between worlds, with no memory of who they once were';
+    console.log(`[STORY] No preset available, generating with default identity for ${wormId}`);
+
+    // Forward to identity-based generation
+    try {
+        const internalReq = { body: { wormId, identity: defaultIdentity } } as any;
+        const internalRes = {
+            json: (data: any) => res.json(data),
+            status: (code: number) => ({ json: (data: any) => res.status(code).json(data) }),
+        } as any;
+        // Re-use the generate-from-identity handler by calling fetch internally
+        const genRes = await fetch(`http://localhost:${PORT}/api/story/generate-from-identity`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ wormId, identity: defaultIdentity }),
+        });
+        const data = await genRes.json();
+        if (!genRes.ok) throw new Error(data.error || 'Generation failed');
+        res.json(data);
+    } catch (err: any) {
+        console.error('[STORY] Default generation failed:', err.message || err);
+        res.status(500).json({ error: 'Story generation failed' });
+    }
+});
+
+// Get story state for a worm
+app.get('/api/story/:wormId', (req, res) => {
+    try {
+        const { wormId } = req.params;
+        const outline = getStoryOutline(wormId);
+
+        if (!outline) {
+            return res.json({ hasStory: false });
+        }
+
+        const template = getStoryTemplate(outline.template_id);
+        if (!template) {
+            // Stale outline — template was deleted or never generated
+            console.warn(`[STORY] Template ${outline.template_id} not found for ${wormId}, cleaning up stale outline`);
+            deleteStoryForWorm(wormId);
+            return res.json({ hasStory: false });
+        }
+
+        const fragments = getStoryFragments(outline.id);
+        const revealedIndices = new Set(fragments.map(f => f.segment_index));
+        const revealedCount = fragments.length;
+        const isComplete = outline.completed_at !== null;
+
+        // Get keyword progress
+        const spokenKws = getSpokenKeywords(wormId);
+        const vocabRows = getStomachContent().filter(w => w.worm_id === wormId);
+        const vocabSet = new Set(vocabRows.map(w => w.text.toLowerCase().replace(/[^a-z0-9]/g, '')));
+        const spokenSet = new Set(spokenKws);
+
+        res.json({
+            hasStory: true,
+            storyId: outline.id,
+            templateId: template.id,
+            title: template.title,
+            tagline: template.tagline || '',
+            totalSegments: template.segments.length,
+            revealedCount,
+            isComplete,
+            segments: template.segments.map(seg => ({
+                index: seg.index,
+                hint: seg.hint,
+                narrative: revealedIndices.has(seg.index) ? seg.narrative : null,
+                revealed: revealedIndices.has(seg.index),
+                keywordProgress: seg.keywords.map(kw => ({
+                    keyword: kw.substring(0, 2) + '___',
+                    fullKeyword: kw,
+                    inVocab: vocabSet.has(kw.toLowerCase().replace(/[^a-z0-9]/g, '')),
+                    spoken: spokenSet.has(kw.toLowerCase()),
+                })),
+            })),
+            fragments,
+            streamFragments: template.streamFragments,
+        });
+    } catch (err: any) {
+        console.error('[STORY] Fetch failed:', err.message || err);
+        res.status(500).json({ error: 'Failed to fetch story' });
+    }
+});
+
+// Check keyword unlock for story segments
+app.post('/api/story/check-unlock', (req, res) => {
+    const { wormId, spokenWords } = req.body;
+    if (!wormId) return res.status(400).json({ error: 'wormId required' });
+
+    try {
+        const outline = getStoryOutline(wormId);
+        if (!outline || outline.completed_at) {
+            return res.json({ unlocked: false, revealedCount: 0, totalSegments: 0, isStoryComplete: !!outline?.completed_at });
+        }
+
+        const template = getStoryTemplate(outline.template_id);
+        if (!template) {
+            return res.json({ unlocked: false, revealedCount: 0, totalSegments: 0, isStoryComplete: false });
+        }
+
+        // 1. Save any matching keywords to spoken_keywords
+        const allKeywords = new Set(template.segments.flatMap(s => s.keywords.map(k => k.toLowerCase())));
+        const spokenWordsLower = (spokenWords || []).map((w: string) => w.toLowerCase());
+        for (const word of spokenWordsLower) {
+            if (allKeywords.has(word)) {
+                markKeywordSpoken(wormId, word);
+            }
+        }
+
+        // 2. Get current state — normalize vocab by stripping non-alphanumeric chars
+        const vocabRows = getStomachContent().filter(w => w.worm_id === wormId);
+        const vocabSet = new Set(vocabRows.map(w => w.text.toLowerCase().replace(/[^a-z0-9]/g, '')));
+        const spokenKws = new Set(getSpokenKeywords(wormId));
+        const fragments = getStoryFragments(outline.id);
+        const revealedIndices = new Set(fragments.map(f => f.segment_index));
+
+        // 3. Check each unrevealed segment sequentially
+        let newlyUnlocked: { index: number; narrative: string } | null = null;
+        for (const seg of template.segments) {
+            if (revealedIndices.has(seg.index)) continue;
+
+            const allInVocab = seg.keywords.every(kw => vocabSet.has(kw.toLowerCase().replace(/[^a-z0-9]/g, '')));
+            const allSpoken = seg.keywords.every(kw => spokenKws.has(kw.toLowerCase()));
+
+            if (allInVocab && allSpoken) {
+                // Unlock this segment
+                saveStoryFragment(outline.id, wormId, seg.index, seg.narrative);
+                revealedIndices.add(seg.index);
+                newlyUnlocked = { index: seg.index, narrative: seg.narrative };
+                console.log(`[STORY] Segment ${seg.index + 1} unlocked for ${wormId}! Keywords: [${seg.keywords.join(', ')}]`);
+                break; // Only unlock one at a time
+            }
+        }
+
+        const revealedCount = revealedIndices.size;
+        const isStoryComplete = revealedCount >= template.segments.length;
+        if (isStoryComplete) {
+            markStoryComplete(outline.id);
+            console.log(`[STORY] Story complete for ${wormId}!`);
+        }
+
+        // Build keyword progress for response
+        const keywordProgress = template.segments.map(seg => ({
+            index: seg.index,
+            revealed: revealedIndices.has(seg.index),
+            keywords: seg.keywords.map(kw => ({
+                keyword: kw.substring(0, 2) + '___',
+                fullKeyword: kw,
+                inVocab: vocabSet.has(kw.toLowerCase().replace(/[^a-z0-9]/g, '')),
+                spoken: spokenKws.has(kw.toLowerCase()),
+            })),
+        }));
+
+        res.json({
+            unlocked: !!newlyUnlocked,
+            segment: newlyUnlocked,
+            revealedCount,
+            totalSegments: template.segments.length,
+            isStoryComplete,
+            keywordProgress,
+        });
+    } catch (err: any) {
+        console.error('[STORY] Check-unlock failed:', err.message || err);
+        res.status(500).json({ error: 'Check-unlock failed' });
+    }
+});
+
+// 3. AI Thought (Proxy) — vocab-only, no story words
 app.post('/api/thought', async (req, res) => {
-    const { vocab, identity } = req.body;
+    const { vocab, identity, wormId } = req.body;
 
     if (!vocab || !Array.isArray(vocab)) {
         console.error('[THOUGHT] Invalid request: vocab must be an array, got:', typeof vocab);
@@ -970,24 +1468,36 @@ app.post('/api/thought', async (req, res) => {
     }
 
     try {
-        console.log('[THOUGHT] Generating thought for vocab:', vocab, 'identity:', identity);
+        console.log('[THOUGHT] Generating thought for identity:', identity, 'wormId:', wormId);
 
         const wordRequired = vocab.length > 1;
         const moodInfo = identity?.mood ? `Your current mood is "${identity.mood}".` : "";
-        const identityInfo = identity?.temperament ? `Your temperament is "${identity.temperament}".` : "";
 
-        const prompt = `I have eaten these words: [${vocab.join(', ')}]. 
-Respond as a lively blob entity. ${moodInfo} ${identityInfo}
+        // Fetch story context for this worm to make thoughts feel like the trapped human speaking
+        let storyContext = '';
+        if (wormId) {
+            const outline = getStoryOutline(wormId);
+            if (outline && outline.template_id) {
+                const template = getStoryTemplate(outline.template_id);
+                if (template) {
+                    storyContext = `\nBACKSTORY: You are a soul that was once human. Your past life: "${template.title}" — ${template.setting.substring(0, 200)}
+You are trapped inside a formless entity in a void. You desperately want to communicate who you were. Every word you speak is a fragment of your lost memory trying to surface. Speak as if these words are clues about your past life — haunting, fragmented, poetic.`;
+                }
+            }
+        }
+
+        const prompt = `I have eaten these words: [${vocab.join(', ')}].${storyContext}
+${moodInfo}
 STRICT RULES:
 1. ONLY use words from the provided list! ONLY use words from the provided list!
 2. You can ALSO use Japanese kaomoji (颜文字 like (o^^o), (´ω｀), ^_^).
-4. Keep the total length between 1 to 20 words. When the list is longer, try your absolute best to form complete, meaningful, and poetic sentences that reflect your identity.
-5. NO explanation, NO preamble, NO extra text. NO standard emojis.
-6. You may repeat words from the list.${wordRequired ? "\n7. CRITICAL: You MUST include at least one word - do not just use kaomoji." : ""}
+3. Keep the total length between 1 to 20 words. When the list is longer, try your absolute best to form complete, meaningful, and poetic sentences that hint at your past identity.
+4. NO explanation, NO preamble, NO extra text. NO standard emojis.
+5. You may repeat words from the list.${wordRequired ? "\n6. CRITICAL: You MUST include at least one word - do not just use kaomoji." : ""}
 
 Vocabulary: [${vocab.join(', ')}]`;
 
-        const rawText = await generateText(prompt, 'thought_generation'); // Use a general context for generation logic
+        const rawText = await generateText(prompt, 'thought_generation');
         let filteredText = filterThought(rawText, vocab);
 
         // Fail-safe: if words > 3 and absolute no words were found, pick one random word
@@ -1191,9 +1701,21 @@ app.post('/api/echo', async (req, res) => {
     }
 });
 
-// 4. World Text (Dynamic Menu)
+// 4. World Text (Dynamic Menu) — returns themed text if worm has a story
 app.get('/api/world-text', (req, res) => {
-    // We can eventually load this from DB/File too
+    const wormId = req.query.wormId as string | undefined;
+
+    if (wormId) {
+        const outline = getStoryOutline(wormId);
+        if (outline && outline.template_id) {
+            const template = getStoryTemplate(outline.template_id);
+            if (template) {
+                return res.json({ paragraphs: template.backgroundTexts });
+            }
+        }
+    }
+
+    // Fallback: generic paragraphs
     const paragraphs = [
         "In the quiet corners of the digital void, a creature made of forgotten syntax roams.",
         "Language is not just a tool; it is a living tissue, an organic mesh of meaning.",
@@ -1207,18 +1729,48 @@ app.get('/api/world-text', (req, res) => {
     res.json({ paragraphs });
 });
 
-// 5. Generate New Paragraphs (AI)
+// 5. Generate New Paragraphs (AI) — themed to story if worm has one
 app.post('/api/generate-paragraphs', async (req, res) => {
+    const { count = 3, wormId } = req.body;
 
+    // If worm has a story, include setting + unrevealed keywords in the prompt
+    let settingContext = '';
+    let keywordInstruction = '';
+    if (wormId) {
+        const outline = getStoryOutline(wormId);
+        if (outline && outline.template_id) {
+            const template = getStoryTemplate(outline.template_id);
+            if (template) {
+                settingContext = `\nSETTING CONTEXT (infuse this atmosphere into the sentences): ${template.setting}\n`;
 
-    const { count = 3 } = req.body;
+                // Find unrevealed keywords the player still needs to discover
+                const fragments = getStoryFragments(outline.id);
+                const revealedIndices = new Set(fragments.map(f => f.segment_index));
+                const unrevealedKeywords: string[] = [];
+                for (const seg of template.segments) {
+                    if (!revealedIndices.has(seg.index)) {
+                        unrevealedKeywords.push(...seg.keywords);
+                    }
+                }
 
+                if (unrevealedKeywords.length > 0) {
+                    // Pick a random subset of keywords to embed (1-2 per batch)
+                    const shuffled = unrevealedKeywords.sort(() => Math.random() - 0.5);
+                    const keywordsToEmbed = shuffled.slice(0, Math.min(count, shuffled.length));
+                    keywordInstruction = `\nIMPORTANT: You MUST naturally weave these specific words into the sentences (at least one keyword per sentence, spread them across different sentences): [${keywordsToEmbed.join(', ')}]. Use each word exactly as given — do not change its form. The words should feel like a natural part of the sentence, not forced.\n`;
+                    console.log(`[GENERATE] Embedding keywords: [${keywordsToEmbed.join(', ')}]`);
+                }
+            }
+        }
+    }
 
     try {
-        console.log(`[GENERATE] Generating ${count} new paragraphs...`);
-        const prompt = `Generate ${count} philosophical single-sentence paragraphs about language, words, meaning, and digital consciousness. Each should be poetic and thought-provoking. Format as JSON array: ["sentence1", "sentence2", "sentence3"]`;
+        console.log(`[GENERATE] Generating ${count} new paragraphs...${settingContext ? ' (story-themed)' : ''}`);
+        const prompt = settingContext
+            ? `Generate ${count} short journal-like entries written as fragmented personal memories from someone in this world:${settingContext}${keywordInstruction}These should read like torn diary pages or personal notes — grounded, specific, with concrete sensory details. Not poetic or literary. Format as JSON array: ["sentence1", "sentence2", "sentence3"]`
+            : `Generate ${count} short journal-like entries written as fragmented personal memories. These should read like torn diary pages — grounded observations about daily life, with concrete sensory details. Not poetic or literary. Format as JSON array: ["sentence1", "sentence2", "sentence3"]`;
 
-        const text = await generateText(prompt, 'paragraphs');
+        const text = await generateText(prompt, 'paragraphs', 0, 'advanced');
         console.log('[GENERATE] AI response:', text);
 
         // Try to extract JSON array

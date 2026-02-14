@@ -30,9 +30,13 @@ export class DiscoveryEngine {
                 // Slightly higher threshold for "Consciousness" to feel organic
                 return words >= 12 || phase >= EvolutionPhase.SENTIENT;
 
-            // Phase 3 (Deity): Environmental hazards and influence
+            // Story-gated: unlocked by revealing hidden story segments
             case 'NEWS_STORM':
+                return (worm.storyRevealedCount || 0) >= 2;
             case 'BLACK_HOLE':
+                return (worm.storyRevealedCount || 0) >= 5;
+
+            // Deity phase only
             case 'VOICE_INPUT':
                 return phase >= EvolutionPhase.DEITY;
 
@@ -46,8 +50,15 @@ export class DiscoveryEngine {
      */
     static getProgressHint(worm: Worm): string {
         const words = worm.totalWordsConsumed || 0;
+        const revealed = worm.storyRevealedCount || 0;
         if (words < 10) {
             return `${10 - words} more memories until self-awareness.`;
+        }
+        if (revealed < 2) {
+            return "Unlock story fragments to awaken dormant powers.";
+        }
+        if (revealed < 5) {
+            return "The void stirs. More memories will reshape reality.";
         }
         if (worm.evolutionPhase < EvolutionPhase.DEITY) {
             return "Seeking transcendence in the digital void.";

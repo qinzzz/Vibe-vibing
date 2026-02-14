@@ -15,6 +15,8 @@ export class DigestionSystem implements System {
     private activeLetterFeed: ActiveLetterFeed | null = null;
 
     private speechBubble: SpeechBubble | null = null;
+    private isThinking = false;
+    private thinkingTimer = 0;
     private canReproduce = false;
     private readonly AXIS_KEYS = [
         'calm',
@@ -41,13 +43,12 @@ export class DigestionSystem implements System {
         'mellow'
     ];
 
-    private journalBuffer: string[] = [];
-    private journalTriggerLimit: number = Math.floor(Math.random() * 3) + 3; // 3-5 words
 
     init(engine: Engine) {
         this.engine = engine;
         this.engine.events.on(EVENTS.TOKEN_EATEN, this.handleTokenEaten);
         this.engine.events.on(EVENTS.THOUGHT_READY, this.handleThoughtReady);
+        this.engine.events.on(EVENTS.THOUGHT_GENERATING, this.handleThoughtGenerating);
         this.engine.events.on(EVENTS.STOMACH_CLEAR, this.handleStomachClear);
         this.engine.events.on(EVENTS.STOP_EATING, this.handleStopEating);
         this.engine.events.on(EVENTS.WORD_REMOVED, this.handleWordRemoved);
@@ -59,6 +60,8 @@ export class DigestionSystem implements System {
 
         this.engine.events.on(EVENTS.GAME_RESET, () => {
             this.speechBubble = null;
+            this.isThinking = false;
+            this.thinkingTimer = 0;
             this.activeLetterFeed = null;
             this.letterQueue = [];
             this.activeWord = null;
@@ -157,7 +160,7 @@ export class DigestionSystem implements System {
             };
             this.reproduceWorm();
         } else {
-            console.warn(`[REPRODUCE] Not ready.Satiation: ${worm.satiation}, Vocab: ${worm.vocabulary.size}, Health: ${worm.health} `);
+            console.warn(`[REPRODUCE] Not ready. Sanity: ${worm.sanity}, Vocab: ${worm.vocabulary.size} `);
             this.speechBubble = {
                 text: "not full yet...",
                 opacity: 0,
@@ -182,7 +185,8 @@ export class DigestionSystem implements System {
         // Emit events to update UI immediately
         this.engine.events.emit(EVENTS.VOCAB_UPDATED, {
             vocab: Array.from(worm.vocabulary),
-            identity: worm.soul.identity
+            identity: worm.soul.identity,
+            wormId: worm.id
         });
     };
 
@@ -227,7 +231,8 @@ export class DigestionSystem implements System {
         worm.swallowedWords.forEach(w => worm.vocabulary.add(w.text));
         this.engine.events.emit(EVENTS.VOCAB_UPDATED, {
             vocab: Array.from(worm.vocabulary),
-            identity: worm.soul.identity
+            identity: worm.soul.identity,
+            wormId: worm.id
         });
     }
 
@@ -261,7 +266,7 @@ export class DigestionSystem implements System {
                     worm.thickness = dbWorm.thickness || 0.25;
                     worm.speedMultiplier = dbWorm.speed_multiplier;
                     worm.birthTime = dbWorm.birth_time;
-                    worm.health = dbWorm.health;
+                    worm.sanity = dbWorm.sanity ?? 100;
                     worm.lastMeal = dbWorm.last_meal;
                     worm.evolutionPhase = dbWorm.evolution_level ?? EvolutionPhase.LARVAL;
                     worm.totalWordsConsumed = dbWorm.total_words_consumed ?? 0;
@@ -331,7 +336,8 @@ export class DigestionSystem implements System {
                 const activeWorm = this.engine.activeWorm;
                 this.engine.events.emit(EVENTS.VOCAB_UPDATED, {
                     vocab: Array.from(activeWorm.vocabulary),
-                    identity: activeWorm.soul.identity
+                    identity: activeWorm.soul.identity,
+                    wormId: activeWorm.id
                 });
 
                 // Emit hydration complete event so UI can update
@@ -372,8 +378,7 @@ export class DigestionSystem implements System {
                 thickness: worm.thickness,
                 speedMultiplier: worm.speedMultiplier,
                 birthTime: worm.birthTime,
-                satiation: worm.satiation,
-                health: worm.health,
+                sanity: worm.sanity,
                 lastMeal: worm.lastMeal,
                 evolutionPhase: worm.evolutionPhase,
                 total_words_consumed: worm.totalWordsConsumed,
@@ -398,7 +403,13 @@ export class DigestionSystem implements System {
         }
     };
 
+    private handleThoughtGenerating = (generating: boolean) => {
+        this.isThinking = generating;
+        if (generating) this.thinkingTimer = 0;
+    };
+
     private handleThoughtReady = (text: string) => {
+        this.isThinking = false;
         const worm = this.engine.activeWorm;
         this.speechBubble = { text, opacity: 0, timer: 300 }; // Extended from 120 (5sec at 60fps)
 
@@ -505,6 +516,11 @@ export class DigestionSystem implements System {
             if (b.timer > 100) b.opacity += (1 - b.opacity) * 0.1; else if (b.timer < 20) b.opacity *= 0.8;
             b.timer--; if (b.timer <= 0) this.speechBubble = null;
         }
+
+        // 5. Thinking animation timer
+        if (this.isThinking) {
+            this.thinkingTimer += dt;
+        }
     }
 
     private startEating(w: { id: string, text: string, pos: { x: number, y: number } }) {
@@ -528,7 +544,7 @@ export class DigestionSystem implements System {
         worm.totalWordsConsumed = (worm.totalWordsConsumed || 0) + 1;
         this.enqueueDigestion(worm as any, w.id, w.text);
 
-        // Emit word consumed event (for satiation increase)
+        // Emit word consumed event (triggers sanity drain)
         this.engine.events.emit(EVENTS.WORD_CONSUMED, {});
 
         // Persist to Backend
@@ -543,7 +559,8 @@ export class DigestionSystem implements System {
 
         this.engine.events.emit(EVENTS.VOCAB_UPDATED, {
             vocab: Array.from(worm.vocabulary),
-            identity: worm.soul.identity
+            identity: worm.soul.identity,
+            wormId: worm.id
         });
         // Notify for UI Log
         this.engine.events.emit('WORD_LOG', { id: w.id, text: w.text });
@@ -551,34 +568,7 @@ export class DigestionSystem implements System {
         this.activeWord = null;
         this.eatingState = EatingState.EATING_LETTERS;
 
-        // Journal Logic
-        this.journalBuffer.push(w.text);
-        console.log(`[JOURNAL] Buffered word: "${w.text}"(${this.journalBuffer.length} / ${this.journalTriggerLimit})`);
-
-        if (this.journalBuffer.length >= this.journalTriggerLimit) {
-            const wordsToProcess = [...this.journalBuffer];
-            this.journalBuffer = [];
-            this.journalTriggerLimit = Math.floor(Math.random() * 3) + 3; // Reset limit 3-5
-
-            // Log of the Labyrinth Gating (Phase 2+)
-            const canLog = DiscoveryEngine.isFeatureEnabled(worm, 'JOURNAL_LOG');
-            if (canLog) {
-                console.log(`[JOURNAL] Triggering API call with words: `, wordsToProcess);
-                fetch('/api/journal', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ words: wordsToProcess })
-                })
-                    .then(res => res.json())
-                    .then(data => {
-                        if (data.text) {
-                            console.log(`[JOURNAL] Entry received from API: `, data.text);
-                            this.engine.events.emit(EVENTS.JOURNAL_ENTRY, data.text);
-                        }
-                    })
-                    .catch(err => console.error("[JOURNAL] API call failed:", err));
-            }
-        }
+        // Journal entries are now generated via story fragments in ThoughtService
     }
 
     private processEating() {
@@ -810,8 +800,8 @@ export class DigestionSystem implements System {
                 if (!child.name) child.name = 'blob';
             }
 
-            // Step 6: Parent loses satiation
-            parent.satiation = Math.max(0, parent.satiation - 40);
+            // Step 6: Parent loses sanity
+            parent.sanity = Math.max(0, parent.sanity - 15);
 
             // Step 7: Save parent and child worm state to DB FIRST (before words)
             await this.saveWormState(parent);
@@ -1029,8 +1019,8 @@ export class DigestionSystem implements System {
 
         // Dynamic Radii Growth
         // +2px to core per word, +1px to hip
-        worm.coreRadius = this.clamp((worm.coreRadius || this.engine.config.coreRadius) + 2, 80, 250);
-        worm.hipRadius = this.clamp((worm.hipRadius || this.engine.config.hipRadius) + 1, 40, 120);
+        worm.coreRadius = this.clamp((worm.coreRadius || this.engine.config.coreRadius) + 2, 80, 125);
+        worm.hipRadius = this.clamp((worm.hipRadius || this.engine.config.hipRadius) + 1, 40, 60);
 
         console.log(`[DIGEST] ${tokens[0]}... -> CoreR: ${worm.coreRadius}, HipR: ${worm.hipRadius}`);
 
@@ -1249,30 +1239,6 @@ export class DigestionSystem implements System {
 
         // Re-enabled shortened card
         this.drawSoulHoverCard(ctx);
-        this.engine.wormState.worms.forEach(worm => {
-            const count = worm.swallowedWords.length;
-            if (count > 0) {
-                ctx.save();
-                ctx.translate(worm.corePos.x, worm.corePos.y + 25); // Offset to avoid letter overlap
-
-                // Background Badge
-                ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
-                ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
-                ctx.lineWidth = 1;
-                ctx.beginPath();
-                ctx.roundRect(-16, -10, 32, 20, 10);
-                ctx.fill();
-                ctx.stroke();
-
-                // Text
-                ctx.font = `10px 'Space Mono'`;
-                ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText(count.toString(), 0, 0);
-                ctx.restore();
-            }
-        });
 
 
         // Draw active feed letter
@@ -1289,7 +1255,7 @@ export class DigestionSystem implements System {
             ctx.fillText(this.activeWord.text, this.activeWord.pos.x, this.activeWord.pos.y);
         }
 
-        // Draw Speech Bubble
+        // Draw Speech Bubble or Thinking Bubble
         if (this.speechBubble) {
             const core = this.engine.blobState.corePos;
             const b = this.speechBubble;
@@ -1321,6 +1287,53 @@ export class DigestionSystem implements System {
             ctx.fillStyle = '#fff';
             ctx.fillText(b.text, 0, 0);
             ctx.restore();
+        } else if (this.isThinking) {
+            // Animated thinking bubble (same style, 3 bouncing dots)
+            const core = this.engine.blobState.corePos;
+            const t = this.thinkingTimer / 1000; // Convert to seconds
+
+            // Fade in over ~0.5s
+            const fadeIn = Math.min(1, t * 2);
+
+            ctx.save();
+            ctx.globalAlpha = fadeIn * 0.95;
+            ctx.translate(core.x, core.y + 100);
+
+            const bw = 52, bh = 30;
+
+            // Bubble background
+            ctx.fillStyle = 'rgba(20, 20, 28, 0.95)';
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+            ctx.lineWidth = 1;
+
+            ctx.beginPath();
+            ctx.roundRect(-bw / 2, -bh / 2, bw, bh, 12);
+            ctx.fill();
+            ctx.stroke();
+
+            // Tail pointing UP (toward worm)
+            ctx.beginPath();
+            ctx.moveTo(-10, -bh / 2);
+            ctx.lineTo(0, -bh / 2 - 10);
+            ctx.lineTo(10, -bh / 2);
+            ctx.fill();
+            ctx.stroke();
+
+            // Three bouncing dots (~1 cycle/sec, staggered)
+            for (let i = 0; i < 3; i++) {
+                const dotPhase = t * Math.PI * 2 * 0.8 - i * 0.8;
+                const bounce = Math.max(0, Math.sin(dotPhase)) * 4;
+                const dotAlpha = 0.4 + Math.max(0, Math.sin(dotPhase)) * 0.6;
+                const dx = (i - 1) * 12;
+                const dy = -bounce;
+
+                ctx.fillStyle = `rgba(255, 255, 255, ${dotAlpha})`;
+                ctx.beginPath();
+                ctx.arc(dx, dy, 3, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            ctx.restore();
         }
 
         this.drawSoulHoverCard(ctx);
@@ -1350,6 +1363,7 @@ export class DigestionSystem implements System {
     cleanup() {
         this.engine.events.off(EVENTS.TOKEN_EATEN, this.handleTokenEaten);
         this.engine.events.off(EVENTS.THOUGHT_READY, this.handleThoughtReady);
+        this.engine.events.off(EVENTS.THOUGHT_GENERATING, this.handleThoughtGenerating);
         this.engine.events.off(EVENTS.WORD_REMOVED, this.handleWordRemoved);
         this.engine.events.off(EVENTS.STOMACH_CLEAR, this.handleStomachClear);
         this.engine.events.off(EVENTS.READY_TO_REPRODUCE, this.handleReproductionReady);

@@ -136,6 +136,9 @@ export class ConsciousnessStreamSystem implements System {
             this.THOUGHT_REFRESH_MS
         );
 
+        // Load story-themed stream fragments if worm has a story
+        this.loadStoryStreamFragments(engine);
+
         this.engine.events.on('INPUT_START', this.handleInput);
 
         this.engine.events.on(EVENTS.GAME_RESET, () => {
@@ -160,6 +163,19 @@ export class ConsciousnessStreamSystem implements System {
         const step = dt / 16.66;
         const t = performance.now() * 0.001;
         const streamWidth = this.getStreamWidth();
+
+        // Update stream proximity for all worms (smooth 0-1 factor)
+        for (const w of this.engine.wormState.worms.values()) {
+            const centerY = this.centerlineY(w.corePos.x, t);
+            const dy = centerY - w.corePos.y;
+            const dist = Math.abs(dy);
+            const halfWidth = streamWidth * 0.5;
+            w.inStream = dist < streamWidth * 0.35;
+            // Smooth proximity: 1.0 at center, tapering to 0 at edge
+            w.streamProximity = this.clamp(1 - dist / halfWidth, 0, 1);
+            // Direction: 1 = stream below, -1 = stream above, 0 = close enough
+            w.streamDirection = dist < halfWidth * 0.4 ? 0 : (dy > 0 ? 1 : -1);
+        }
 
         this.updateHoverState(t, streamWidth);
 
@@ -212,6 +228,7 @@ export class ConsciousnessStreamSystem implements System {
         this.drawParticles(ctx, t, streamWidth);
         this.drawFragments(ctx, t, streamWidth);
         this.drawStreamLabel(ctx, t, streamWidth);
+
     }
 
     cleanup() {
@@ -481,7 +498,6 @@ export class ConsciousnessStreamSystem implements System {
 
             ctx.save();
             ctx.translate(fragment.x, fragment.y);
-            ctx.rotate(rotation);
 
             // Newspaper font (Stable, legible)
             ctx.font = `normal italic ${fragment.fontSize.toFixed(1)}px monospace`;
@@ -556,19 +572,13 @@ export class ConsciousnessStreamSystem implements System {
             const glyph = glyphs[i];
             const glyphWidth = widths[i];
             const x = this.streamLabelX + cursor;
-            const y = labelY + Math.sin(t * 0.9 + i * 0.44) * 2.1;
-            const rotation = this.degToRad(
-                Math.sin(t * 0.7 + i * 0.6) * 4 + this.valueNoise1D(i * 0.37 + t * 0.2) * 1.8
-            );
+            const y = labelY;
             const hue = 198 + Math.sin(i * 0.26 + t * 0.2) * 10;
             const lightness = 68 + Math.sin(t * 1.1 + i * 0.48) * 8;
             const alpha = 0.58 + Math.sin(t * 0.8 + i * 0.31) * 0.09;
 
             ctx.save();
             ctx.translate(x, y);
-            ctx.rotate(rotation);
-            ctx.shadowColor = `hsla(${hue}, 80%, 70%, ${this.clamp(alpha * 0.55, 0, 0.42)})`;
-            ctx.shadowBlur = 4;
             ctx.fillStyle = `hsla(${hue}, 78%, ${lightness}%, ${this.clamp(alpha, 0.44, 0.72)})`;
             ctx.fillText(glyph, 0, 0);
             ctx.restore();
@@ -578,6 +588,7 @@ export class ConsciousnessStreamSystem implements System {
 
         ctx.restore();
     }
+
 
     private spawnFragment(t: number, scatterAcrossViewport: boolean) {
         const streamWidth = this.getStreamWidth();
@@ -630,10 +641,10 @@ export class ConsciousnessStreamSystem implements System {
             fontSize,
             width,
             height: wordLayout.totalHeight,
-            baseRotation: this.degToRad(this.randomRange(-24, 24)),
-            rotationWobbleAmp: this.degToRad(this.randomRange(2.2, 5.5)),
-            rotationWobbleSpeed: this.randomRange(0.35, 0.92),
-            rotationPhase: this.randomRange(0, Math.PI * 2),
+            baseRotation: 0,
+            rotationWobbleAmp: 0,
+            rotationWobbleSpeed: 0,
+            rotationPhase: 0,
             wormGlow: 0,
             words: wordLayout.words,
             isHovered: false,
@@ -1113,6 +1124,31 @@ export class ConsciousnessStreamSystem implements System {
 
     private normalizeThoughtText(text: string) {
         return text.toLowerCase().replace(/\s+/g, ' ').trim();
+    }
+
+    private async loadStoryStreamFragments(engine: Engine) {
+        const wormId = engine.wormState?.activeWormId;
+        if (!wormId) return;
+
+        try {
+            const res = await fetch(`/api/story/${wormId}`);
+            const data = await res.json();
+            if (data.hasStory && data.streamFragments && Array.isArray(data.streamFragments)) {
+                let added = 0;
+                for (const sf of data.streamFragments) {
+                    this.addThoughtIfNew({
+                        id: sf.id || `story-sf-${added}`,
+                        text: sf.text,
+                        source: sf.source || 'Unknown',
+                        timestamp: sf.timestamp || Math.floor(Date.now() / 1000),
+                    });
+                    added++;
+                }
+                console.log(`[STREAM] Loaded ${added} story-themed stream fragments for ${wormId}`);
+            }
+        } catch (err) {
+            console.warn('[STREAM] Failed to load story stream fragments:', err);
+        }
     }
 
     private pickStreamChunk(): StreamThought {

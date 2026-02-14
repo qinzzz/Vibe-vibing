@@ -205,6 +205,10 @@ export class PhysicsSystem implements System {
                 p.size = Math.max(0, p.size - 0.01);
             } else if (p.type === 'tear') {
                 p.vy += 0.08; // Heavy gravity
+            } else if (p.type === 'heal') {
+                p.vy -= 0.03; // Gentle float up
+                p.x += Math.sin(performance.now() * 0.005 + p.y * 0.08) * 0.15;
+                p.size = Math.max(0.5, p.size - 0.005);
             }
         }
     }
@@ -286,6 +290,15 @@ export class PhysicsSystem implements System {
                 ctx.moveTo(0, size * 0.3);
                 ctx.bezierCurveTo(size * 0.5, -size * 0.5, size, 0, 0, size);
                 ctx.bezierCurveTo(-size, 0, -size * 0.5, -size * 0.5, 0, size * 0.3);
+            } else if (p.type === 'heal') {
+                // Soft green glow with bright core
+                const alpha = p.life / p.maxLife;
+                const glow = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.size * 2.5);
+                glow.addColorStop(0, `rgba(100, 255, 140, ${alpha * 0.9})`);
+                glow.addColorStop(0.4, `rgba(60, 220, 100, ${alpha * 0.5})`);
+                glow.addColorStop(1, `rgba(30, 180, 80, 0)`);
+                ctx.fillStyle = glow;
+                ctx.arc(p.x, p.y, p.size * 2.5, 0, Math.PI * 2);
             } else {
                 ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
             }
@@ -321,7 +334,7 @@ export class PhysicsSystem implements System {
 
         // Color params
         const outlineColor = `hsla(${renderHue}, ${renderSat}%, ${Math.max(20, renderLight - 20)}%, 0.6)`; // Darker outline
-        const coreColor = `hsla(${renderHue}, ${renderSat}%, ${renderLight}%, 0.4)`;
+        const fillColor = `hsla(${renderHue}, ${renderSat}%, ${Math.max(15, renderLight - 15)}%, 0.55)`; // Solid fill close to outline
 
         const coreRadius = (worm.coreRadius || s.coreRadius) * (worm.sizeMultiplier || 1);
         const hipRadius = (worm.hipRadius || s.hipRadius) * (worm.sizeMultiplier || 1);
@@ -333,7 +346,7 @@ export class PhysicsSystem implements System {
 
         if (isBioluminescent) {
             // How full the worm is (0..1)
-            const fullness = Math.min(1, (worm.satiation ?? 0) / 100);
+            const fullness = Math.min(1, (worm.sanity ?? 100) / 100);
 
             // Heartbeat: frequency + amplitude scale with fullness
             const t = performance.now() * 0.001;
@@ -423,13 +436,75 @@ export class PhysicsSystem implements System {
                 }
             }
 
+            // Pass 1: Fill interior cells (all 4 corners inside)
+            ctx.fillStyle = fillColor;
+            for (let i = 0; i < cols; i++) {
+                for (let j = 0; j < rows; j++) {
+                    const v0 = gridValues[i][j], v1 = gridValues[i + 1][j];
+                    const v2 = gridValues[i + 1][j + 1], v3 = gridValues[i][j + 1];
+                    if (v0 >= iso && v1 >= iso && v2 >= iso && v3 >= iso) {
+                        ctx.fillRect(gridMinX + i * cellSize, gridMinY + j * cellSize, cellSize, cellSize);
+                    }
+                }
+            }
+
+            // Pass 2: Fill partial cells along the boundary with polygons
+            for (let i = 0; i < cols; i++) {
+                for (let j = 0; j < rows; j++) {
+                    const x = gridMinX + i * cellSize, y = gridMinY + j * cellSize;
+                    const v0 = gridValues[i][j], v1 = gridValues[i + 1][j];
+                    const v2 = gridValues[i + 1][j + 1], v3 = gridValues[i][j + 1];
+                    let caseIdx = 0;
+                    if (v0 >= iso) caseIdx += 1;
+                    if (v1 >= iso) caseIdx += 2;
+                    if (v2 >= iso) caseIdx += 4;
+                    if (v3 >= iso) caseIdx += 8;
+                    if (caseIdx === 0 || caseIdx === 15) continue;
+
+                    const gp = (p0: Vector2D, p1: Vector2D, va0: number, va1: number) => {
+                        const t = (iso - va0) / (va1 - va0);
+                        return { x: lerp(p0.x, p1.x, t), y: lerp(p0.y, p1.y, t) };
+                    };
+                    const c0 = { x, y }, c1 = { x: x + cellSize, y };
+                    const c2 = { x: x + cellSize, y: y + cellSize }, c3 = { x, y: y + cellSize };
+                    const e0 = gp(c0, c1, v0, v1), e1 = gp(c1, c2, v1, v2);
+                    const e2 = gp(c2, c3, v2, v3), e3 = gp(c3, c0, v3, v0);
+
+                    // Build polygon of the "inside" region for this cell
+                    const poly: Vector2D[] = [];
+                    switch (caseIdx) {
+                        case 1:  poly.push(c0, e0, e3); break;
+                        case 2:  poly.push(e0, c1, e1); break;
+                        case 3:  poly.push(c0, c1, e1, e3); break;
+                        case 4:  poly.push(e1, c2, e2); break;
+                        case 5:  poly.push(c0, e0, e1, c2, e2, e3); break;
+                        case 6:  poly.push(e0, c1, c2, e2); break;
+                        case 7:  poly.push(c0, c1, c2, e2, e3); break;
+                        case 8:  poly.push(e3, e2, c3); break;
+                        case 9:  poly.push(c0, e0, e2, c3); break;
+                        case 10: poly.push(e0, c1, e1, e2, c3, e3); break;
+                        case 11: poly.push(c0, c1, e1, e2, c3); break;
+                        case 12: poly.push(e3, e1, c2, c3); break;
+                        case 13: poly.push(c0, e0, e1, c2, c3); break;
+                        case 14: poly.push(e0, c1, c2, c3, e3); break;
+                    }
+                    if (poly.length > 2) {
+                        ctx.beginPath();
+                        ctx.moveTo(poly[0].x, poly[0].y);
+                        for (let k = 1; k < poly.length; k++) {
+                            ctx.lineTo(poly[k].x, poly[k].y);
+                        }
+                        ctx.closePath();
+                        ctx.fill();
+                    }
+                }
+            }
+
+            // Pass 3: Stroke contour lines on top
             ctx.beginPath();
             ctx.strokeStyle = outlineColor;
             ctx.lineWidth = 1.5;
-            // Also fill slightly for volume
-            ctx.fillStyle = coreColor;
 
-            // Simple Marching Squares drawing loop
             for (let i = 0; i < cols; i++) {
                 for (let j = 0; j < rows; j++) {
                     const x = gridMinX + i * cellSize, y = gridMinY + j * cellSize;
@@ -468,7 +543,6 @@ export class PhysicsSystem implements System {
                 }
             }
             ctx.stroke();
-            // Fill is tricky with lines, skipping fill for now to keep style consistent with original
         }
     }
 

@@ -101,6 +101,7 @@ export class BackgroundSystem implements System {
     private engine!: Engine;
     private blocks: TextBlock[] = [];
     private isRegenerating = false;
+    private regenParagraphsEnabled = true;
     private lastWordCount = 0;
     private nearbyWordCheckTimer = 0;
     private regenerationCooldownTimer = 0;
@@ -109,8 +110,8 @@ export class BackgroundSystem implements System {
     private readonly NEARBY_WORD_CHECK_INTERVAL = 0.5; // seconds
     private readonly REGENERATION_COOLDOWN = 6.0; // seconds
     private readonly STARTUP_REGEN_GUARD = 4.0; // seconds
-    private readonly SPAWN_MIN_DISTANCE = 260;
-    private readonly SPAWN_MAX_DISTANCE = 1200;
+    private readonly SPAWN_MIN_DISTANCE = 150;
+    private readonly SPAWN_MAX_DISTANCE = 700;
 
     private readonly STORM_MAX_FRAMES = 230;
     private readonly STORM_GOLDEN_ANGLE = 2.399963229728653;
@@ -180,6 +181,10 @@ export class BackgroundSystem implements System {
         this.engine.events.on(EVENTS.NEWS_STORM_DEBUG_UPDATED, this.handleNewsStormDebugUpdated);
         this.engine.events.on(EVENTS.NEWS_STORM_MODE_UPDATED, this.handleNewsStormModeUpdated);
         this.engine.events.on(EVENTS.NEWS_STORM_WEATHER_UPDATED, this.handleNewsStormWeatherUpdated);
+        this.engine.events.on(EVENTS.TOGGLE_REGEN_PARAGRAPHS, (data: { enabled: boolean }) => {
+            this.regenParagraphsEnabled = data.enabled;
+            console.log(`[BACKGROUND] Paragraph regeneration ${data.enabled ? 'enabled' : 'disabled'}`);
+        });
 
         this.engine.events.on(EVENTS.GAME_RESET, () => {
             this.blocks = [];
@@ -422,7 +427,10 @@ export class BackgroundSystem implements System {
         const attempts = 100;
         const ctx = this.engine.ctx;
 
-        fetch('/api/world-text')
+        const wormId = this.engine.wormState?.activeWormId;
+        const url = wormId ? `/api/world-text?wormId=${encodeURIComponent(wormId)}` : '/api/world-text';
+
+        fetch(url)
             .then(res => res.json())
             .then(data => {
                 const paragraphs = data.paragraphs || BACKGROUND_PARAGRAPHS;
@@ -465,8 +473,8 @@ export class BackgroundSystem implements System {
     private canPlaceBlock(testBlock: TextBlock, padding = 50, avoidStream = false) {
         if (avoidStream && this.overlapsStreamLane(testBlock, padding)) return false;
 
-        // Density Check: Max 5 tokens in 200px radius
-        const radius = 200;
+        // Density Check: Max 10 tokens in 150px radius
+        const radius = 150;
         const radiusSq = radius * radius;
         let localCount = 0;
         const centerX = testBlock.x + testBlock.width / 2;
@@ -484,7 +492,7 @@ export class BackgroundSystem implements System {
             }
         }
 
-        if (localCount > 5) return false;
+        if (localCount > 10) return false;
 
         return !this.blocks.some(block => this.hasPresentTokens(block) && this.blocksOverlap(testBlock, block, padding));
     }
@@ -1212,7 +1220,7 @@ export class BackgroundSystem implements System {
         const { x, y } = pos;
         this.pendingToken = null;
 
-        const INTERACTION_OPACITY_THRESHOLD = 0.05;
+        const INTERACTION_OPACITY_THRESHOLD = 0.02;
 
         for (const block of this.blocks) {
             if ((block.opacity ?? 0.15) < INTERACTION_OPACITY_THRESHOLD) continue;
@@ -1268,11 +1276,11 @@ export class BackgroundSystem implements System {
             const fadeInProgress = this.clamp(block.age / fadeInDuration, 0, 1);
             const baseOpacity = 0.15;
 
-            // Fading: Decays from baseOpacity starting after 10s, gone at 60s
+            // Fading: Decays from baseOpacity starting after 10s, gone at 40s
             const startFade = 10;
-            const endFade = 60;
+            const endFade = 40;
             const fadeProgress = this.clamp((block.age - startFade) / (endFade - startFade), 0, 1);
-            block.opacity = this.lerp(baseOpacity * fadeInProgress, 0.02, fadeProgress);
+            block.opacity = this.lerp(baseOpacity * fadeInProgress, 0.0, fadeProgress);
 
             // Subtle Drift: Recedes as it ages
             if (block.age > startFade) {
@@ -1296,9 +1304,9 @@ export class BackgroundSystem implements System {
             }
         }
 
-        // Culling: Remove blocks older than 65s
+        // Culling: Remove blocks older than 45s (fully faded by 40s)
         const initialCount = this.blocks.length;
-        this.blocks = this.blocks.filter(b => (b.age ?? 0) < 65);
+        this.blocks = this.blocks.filter(b => (b.age ?? 0) < 45);
         if (this.blocks.length < initialCount) {
             console.log(`[BACKGROUND] Culled ${initialCount - this.blocks.length} aged-out blocks.`);
         }
@@ -1316,7 +1324,7 @@ export class BackgroundSystem implements System {
         const { x, y } = this.engine.mousePos;
         let anyHovered = false;
 
-        const INTERACTION_OPACITY_THRESHOLD = 0.05;
+        const INTERACTION_OPACITY_THRESHOLD = 0.08;
         for (const block of this.blocks) {
             const isVisible = (block.opacity ?? 0.15) >= INTERACTION_OPACITY_THRESHOLD;
             for (const token of block.tokens) {
@@ -1340,7 +1348,7 @@ export class BackgroundSystem implements System {
             const ty = this.pendingToken.y + this.pendingToken.height / 2;
             const dist = Math.sqrt((core.x - tx) ** 2 + (core.y - ty) ** 2);
 
-            const INTERACTION_OPACITY_THRESHOLD = 0.05;
+            const INTERACTION_OPACITY_THRESHOLD = 0.08;
             // Find parent block to check opacity
             const parentBlock = this.blocks.find(b => b.tokens.includes(this.pendingToken!));
             const isVisible = (parentBlock?.opacity ?? 0.15) >= INTERACTION_OPACITY_THRESHOLD;
@@ -1680,6 +1688,7 @@ export class BackgroundSystem implements System {
         }
 
         if (
+            this.regenParagraphsEnabled &&
             this.startupRegenerationDelay <= 0 &&
             nearbyWordCount < this.MIN_WORD_THRESHOLD &&
             !this.isRegenerating &&
@@ -1701,10 +1710,11 @@ export class BackgroundSystem implements System {
             this.blocks = this.blocks.filter(block => block.tokens.some(token => token.state === 'present'));
             console.log(`[BACKGROUND] Cleaned blocks, ${this.blocks.length} remaining`);
 
+            const wormId = this.engine.wormState?.activeWormId;
             const response = await fetch('/api/generate-paragraphs', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ count: 3 })
+                body: JSON.stringify({ count: 3, wormId })
             });
 
             const data = await response.json();

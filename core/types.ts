@@ -154,8 +154,10 @@ export interface Worm {
     sizeMultiplier: number;
     thickness: number; // Added for visual evolution
     speedMultiplier: number;
-    satiation: number;
-    health: number;
+    sanity: number;    // 0-100, the single life/mind bar
+    inStream: boolean; // true when worm is within stream area
+    streamProximity: number; // 0-1 continuous distance factor for smooth regen
+    streamDirection: number; // 1 = stream is below, -1 = stream is above, 0 = in stream
     lastMeal: number;
     corePos: Vector2D;
     coreVel: Vector2D;
@@ -171,6 +173,7 @@ export interface Worm {
     evolutionPhase: EvolutionPhase;
     visualColor?: { h: number, s: number, l: number }; // Added for visual evolution
     hasProvedSentience?: boolean; // Added for progression overhaul
+    storyRevealedCount: number; // Number of story segments unlocked
     coreRadius: number;
     hipRadius: number;
 }
@@ -184,7 +187,7 @@ export interface SoulParticle {
     maxLife: number;
     size: number;
     color: string;
-    type: 'fizz' | 'spark' | 'bubble' | 'dust' | 'heart' | 'tear';
+    type: 'fizz' | 'spark' | 'bubble' | 'dust' | 'heart' | 'tear' | 'heal';
 }
 
 export interface WormState {

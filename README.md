@@ -187,7 +187,20 @@ Functionality:
     *   **Deity Phase**: Unlocks high-level "Cosmic Controls" including **Black Hole Navigation**, **News Storms**, and the **Voice Confessional**.
 *   **Narrative Feedback**: Added dynamic progress hints that guide the player toward the next stage of evolution without traditional tutorials.
 
-## Proposal for next step - New Level Design 
+### Day 8 - Qinxin
+
+**Story Weaving System**
+
+Words are no longer just fuel for stats — their *content* now matters. A hidden AI-generated story outline is created at game start, and the worm's thoughts gradually reveal fragments of that narrative as the player collects words. The player's goal becomes uncovering the full story.
+
+*   **Hidden Story Generation**: On first load, the server generates a ~200-word surreal story outline broken into 10 sequential segments, stored in a new SQLite table and hidden from the player.
+*   **Story-Aware Thoughts**: When the worm eats words, the AI no longer generates random thoughts — it crafts cryptic fragments that reveal the next piece of the hidden story, weaving the worm's available vocabulary into the narrative.
+*   **Labyrinth Journal Refactor**: The journal now displays story fragments in reading order with a progress bar (`STORY PROGRESS X/10`), typewriter animation on newly revealed fragments, and dimmed system alerts as secondary entries.
+*   **Story Progress UI**: Added a "Hidden Story" section in the Evolution Dashboard (right sidebar) showing progress and a debug toggle to peek at the full hidden outline.
+*   **Persistence**: Story outlines and revealed fragments persist across sessions via two new database tables (`story_outlines`, `story_fragments`). Resetting the game clears the story and generates a fresh one.
+*   **Graceful Fallback**: When no API key is configured or the story is complete, thoughts fall through to the existing vocab-based generation system.
+
+## Proposal for next step - New Level Design
 *(My laptop was catching fire and reached the cap of my genimi plan...so just leaving some ideas here)*
 *   **Level 1: The Origin (The Birth of Meaning)**
     *   **Visuals:** High-contrast, 2D "Blueprint" style. Only the Marching Squares outline is visible; no fills or glow.

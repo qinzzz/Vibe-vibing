@@ -203,7 +203,7 @@ export const LAYOUT_CONSTANTS = {
   BLOCK_WIDTH: 300,
   FONT_SIZE: 16,
   LINE_HEIGHT: 22,
-  MAX_BLOCKS: 5
+  MAX_BLOCKS: 8
 };
 
 export const MOTTO_TEMPLATES = {

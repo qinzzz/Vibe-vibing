@@ -154,8 +154,10 @@ export interface Worm {
   speedMultiplier: number;   // Movement speed
 
   // Lifecycle
-  satiation: number;         // 0-100, increases when eating
-  health: number;            // 0-100, decreases over time
+  sanity: number;            // 0-100, the single life/mind bar
+  inStream: boolean;         // true when worm is within stream area
+  streamProximity: number;   // 0-1 continuous distance factor for smooth regen
+  streamDirection: number;   // 1 = stream below, -1 = above, 0 = in stream
   lastMeal: number;          // timestamp
 
   // State (existing blob state)
@@ -171,6 +173,7 @@ export interface Worm {
   swallowedWords: SwallowedWord[];
   digestionQueue: DigestionRecord[];
   soul: WormSoul;
+  storyRevealedCount: number; // Number of story segments unlocked
 }
 
 export interface WormState {

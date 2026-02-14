@@ -5,14 +5,11 @@ import { GameDirector } from './GameDirector';
 import { DiscoveryEngine } from './DiscoveryEngine';
 
 const LIFECYCLE_CONSTANTS = {
-    SATIATION_DECAY_RATE: 0.05,      // Per second
-    HEALTH_DECAY_RATE: 0.5,          // When starving (0.5/sec = ~3.3min to die)
-    REPRODUCTION_THRESHOLD: 100,      // Satiation level
-    MIN_VOCAB_TO_REPRODUCE: 12,      // Words needed
-    HEALTH_REPRODUCTION_THRESHOLD: 95, // Health needed
-    DEATH_THRESHOLD: 0,              // Health to die
-    STARVATION_THRESHOLD: 20,        // Satiation when health decays
-    SATIATION_PER_WORD: 8            // Gained per word eaten
+    SANITY_DRAIN_PER_WORD: 5,           // Lost per word eaten
+    SANITY_STREAM_REGEN_RATE: 2.0,      // Per second when in stream
+    SANITY_PASSIVE_DECAY: 0.02,         // Slow background drain per second
+    DEATH_THRESHOLD: 0,                 // Sanity to die
+    MIN_VOCAB_TO_REPRODUCE: 12,         // Words needed
 };
 
 export class WormLifecycleSystem implements System {
@@ -29,8 +26,7 @@ export class WormLifecycleSystem implements System {
 
     private handleWordConsumed = () => {
         const worm = this.engine.activeWorm;
-        worm.satiation = Math.min(100, worm.satiation + LIFECYCLE_CONSTANTS.SATIATION_PER_WORD);
-        worm.health = Math.min(100, worm.health + 2); // Small health boost
+        worm.sanity = Math.max(0, worm.sanity - LIFECYCLE_CONSTANTS.SANITY_DRAIN_PER_WORD);
         worm.lastMeal = Date.now();
 
         // Save worm state after eating
@@ -42,22 +38,36 @@ export class WormLifecycleSystem implements System {
         const now = Date.now();
 
         this.engine.wormState.worms.forEach(worm => {
-            // Decay satiation over time (accelerated for DEITY phase)
-            let decayRate = LIFECYCLE_CONSTANTS.SATIATION_DECAY_RATE;
-            if (worm.evolutionPhase === 2 /* DEITY */) {
-                decayRate *= 5.0; // Deity metabolism is cosmic and intense
-            }
-            worm.satiation = Math.max(0, worm.satiation - decayRate * deltaSeconds);
+            // Passive sanity decay (always ticking)
+            worm.sanity = Math.max(0, worm.sanity - LIFECYCLE_CONSTANTS.SANITY_PASSIVE_DECAY * deltaSeconds);
 
-            // Starving? Lose health
-            if (worm.satiation < LIFECYCLE_CONSTANTS.STARVATION_THRESHOLD) {
-                worm.health = Math.max(0, worm.health - LIFECYCLE_CONSTANTS.HEALTH_DECAY_RATE * deltaSeconds);
-            } else if (worm.health < 100) {
-                worm.health = Math.min(100, worm.health + 0.01 * deltaSeconds); // Slow regen
+            // Stream regeneration — scales smoothly with proximity (0-1)
+            const proximity = worm.streamProximity ?? 0;
+            if (proximity > 0.01) {
+                const regenRate = LIFECYCLE_CONSTANTS.SANITY_STREAM_REGEN_RATE * proximity;
+                worm.sanity = Math.min(100, worm.sanity + regenRate * deltaSeconds);
+
+                // Green healing particles (frequency scales with proximity)
+                if (worm.sanity < 100 && Math.random() < 0.3 * proximity) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const dist = 30 + Math.random() * 60;
+                    if (!worm.particles) worm.particles = [];
+                    worm.particles.push({
+                        x: worm.corePos.x + Math.cos(angle) * dist,
+                        y: worm.corePos.y + Math.sin(angle) * dist,
+                        vx: (Math.random() - 0.5) * 0.3,
+                        vy: -(0.3 + Math.random() * 0.5),
+                        life: 1.5 + Math.random() * 1.0,
+                        maxLife: 2.5,
+                        size: 2 + Math.random() * 3,
+                        color: `hsla(${130 + Math.random() * 30}, 80%, ${55 + Math.random() * 20}%, 0.8)`,
+                        type: 'heal',
+                    });
+                }
             }
 
-            // Check for death
-            if (worm.health <= LIFECYCLE_CONSTANTS.DEATH_THRESHOLD) {
+            // Death check
+            if (worm.sanity <= LIFECYCLE_CONSTANTS.DEATH_THRESHOLD) {
                 this.killWorm(worm);
                 return;
             }
@@ -96,10 +106,9 @@ export class WormLifecycleSystem implements System {
                 thickness: worm.thickness,
                 speedMultiplier: worm.speedMultiplier,
                 birthTime: worm.birthTime,
-                health: worm.health,
+                sanity: worm.sanity,
                 lastMeal: worm.lastMeal,
                 evolutionPhase: worm.evolutionPhase,
-                satiation: worm.satiation,
                 total_words_consumed: worm.totalWordsConsumed,
                 hasProvedSentience: worm.hasProvedSentience,
                 coreRadius: worm.coreRadius,
@@ -137,29 +146,9 @@ export class WormLifecycleSystem implements System {
         }
     }
 
-    draw(ctx: CanvasRenderingContext2D) {
-        // Draw lifecycle bars above each worm - Gated by Phase 2
-        this.engine.wormState.worms.forEach(worm => {
-            if (!DiscoveryEngine.isFeatureEnabled(worm, 'BIO_BARS')) return;
-
-            const x = worm.corePos.x;
-            const y = worm.corePos.y - 120;
-
-            // Check if ready to reproduce
-            const isReady = worm.vocabulary.size >= LIFECYCLE_CONSTANTS.MIN_VOCAB_TO_REPRODUCE &&
-                GameDirector.isFeatureEnabled(worm, 'SPLITTING') &&
-                worm.hasProvedSentience;
-
-            // Draw ready indicator
-            if (isReady && worm.id === this.engine.wormState.activeWormId) {
-                ctx.save();
-                ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
-                ctx.font = 'bold 10px monospace';
-                ctx.textAlign = 'center';
-                ctx.fillText('⚡ SPACE TO SPLIT', x, y - 15);
-                ctx.restore();
-            }
-        });
+    draw(_ctx: CanvasRenderingContext2D) {
+        // Sanity is communicated via canvas distortion effects (Engine.draw),
+        // no HUD bars drawn on the worm body.
     }
 
     cleanup() {

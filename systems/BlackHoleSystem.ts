@@ -374,55 +374,133 @@ export class BlackHoleSystem implements System {
     // ==================== Drawing ====================
 
     private drawBlackHoles(ctx: CanvasRenderingContext2D) {
+        const t = performance.now() * 0.001;
+
         for (const hole of this.blackHoles) {
             ctx.save();
 
-            // Check if this is the nearest hole (proximity warning)
             const isNearby = this.nearestHoleId === hole.id;
+            const pulse = Math.sin(hole.pulsePhase * (isNearby ? 2.0 : 1.0)) * 0.5 + 0.5;
+            const eh = hole.eventHorizon;
 
-            // Pulsing glow (faster when nearby)
-            const pulseSpeed = isNearby ? 2.0 : 1.0;
-            const pulse = Math.sin(hole.pulsePhase * pulseSpeed) * 0.5 + 0.5; // 0-1
-            const glowRadius = hole.radius * (1.5 + pulse * (isNearby ? 0.5 : 0.3));
-
-            // Outer glow (brighter when nearby)
-            const gradient = ctx.createRadialGradient(
-                hole.x, hole.y, 0,
-                hole.x, hole.y, glowRadius
+            // --- 1. Gravitational lensing glow (large soft halo) ---
+            const lensRadius = eh * 3.5;
+            const lensGrad = ctx.createRadialGradient(
+                hole.x, hole.y, eh * 0.8,
+                hole.x, hole.y, lensRadius
             );
-            const glowIntensity = isNearby ? 0.5 : 0.3;
-            gradient.addColorStop(0, `hsla(${hole.hue}, 70%, 30%, ${glowIntensity})`);
-            gradient.addColorStop(0.5, `hsla(${hole.hue}, 60%, 20%, ${glowIntensity * 0.6})`);
-            gradient.addColorStop(1, `hsla(${hole.hue}, 50%, 10%, 0)`);
-
-            ctx.fillStyle = gradient;
+            lensGrad.addColorStop(0, `hsla(${hole.hue}, 60%, 15%, 0.25)`);
+            lensGrad.addColorStop(0.3, `hsla(${hole.hue}, 50%, 10%, 0.12)`);
+            lensGrad.addColorStop(0.6, `hsla(${hole.hue + 20}, 40%, 8%, 0.05)`);
+            lensGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+            ctx.fillStyle = lensGrad;
             ctx.beginPath();
-            ctx.arc(hole.x, hole.y, glowRadius, 0, Math.PI * 2);
+            ctx.arc(hole.x, hole.y, lensRadius, 0, Math.PI * 2);
             ctx.fill();
 
-            // Event horizon (pure black)
-            ctx.fillStyle = '#000000';
+            // --- 2. Accretion disk (elliptical, tilted) ---
+            const diskOuterRadius = eh * 2.4;
+            const diskInnerRadius = eh * 1.15;
+            const diskTilt = 0.35; // Y-axis compression to simulate tilt
+            const diskRotation = t * 0.15 + hole.hue * 0.01;
+
+            ctx.save();
+            ctx.translate(hole.x, hole.y);
+            ctx.rotate(diskRotation);
+            ctx.scale(1, diskTilt);
+
+            // Multiple disk layers for depth
+            for (let layer = 0; layer < 3; layer++) {
+                const layerRadius = diskOuterRadius - layer * (diskOuterRadius - diskInnerRadius) / 3;
+                const layerAlpha = (0.08 + layer * 0.04) * (isNearby ? 1.5 : 1.0);
+                const layerHue = hole.hue + layer * 15;
+
+                const diskGrad = ctx.createRadialGradient(0, 0, diskInnerRadius, 0, 0, layerRadius);
+                diskGrad.addColorStop(0, `hsla(${layerHue + 30}, 90%, 70%, ${layerAlpha * 1.5})`);
+                diskGrad.addColorStop(0.3, `hsla(${layerHue + 15}, 85%, 55%, ${layerAlpha})`);
+                diskGrad.addColorStop(0.7, `hsla(${layerHue}, 70%, 40%, ${layerAlpha * 0.6})`);
+                diskGrad.addColorStop(1, `hsla(${layerHue - 10}, 50%, 20%, 0)`);
+
+                ctx.fillStyle = diskGrad;
+                ctx.beginPath();
+                ctx.arc(0, 0, layerRadius, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // Hot bright inner edge
+            const innerGlow = ctx.createRadialGradient(0, 0, eh * 1.0, 0, 0, diskInnerRadius * 1.3);
+            innerGlow.addColorStop(0, `hsla(${hole.hue + 40}, 100%, 85%, ${0.3 * (isNearby ? 1.4 : 1.0)})`);
+            innerGlow.addColorStop(0.5, `hsla(${hole.hue + 20}, 95%, 65%, 0.15)`);
+            innerGlow.addColorStop(1, 'rgba(0, 0, 0, 0)');
+            ctx.fillStyle = innerGlow;
             ctx.beginPath();
-            ctx.arc(hole.x, hole.y, hole.eventHorizon, 0, Math.PI * 2);
+            ctx.arc(0, 0, diskInnerRadius * 1.3, 0, Math.PI * 2);
             ctx.fill();
 
-            // Accretion disk effect (brighter when nearby)
-            const ringAlpha = (0.4 + pulse * 0.2) * (isNearby ? 1.5 : 1.0);
-            ctx.strokeStyle = `hsla(${hole.hue}, 80%, 50%, ${ringAlpha})`;
-            ctx.lineWidth = isNearby ? 3 : 2;
+            ctx.restore();
+
+            // --- 3. Photon ring (thin bright ring at the edge of the shadow) ---
+            const photonRadius = eh * 1.08;
+            const photonAlpha = (0.4 + pulse * 0.25) * (isNearby ? 1.3 : 1.0);
+            ctx.strokeStyle = `hsla(${hole.hue + 30}, 90%, 75%, ${photonAlpha})`;
+            ctx.lineWidth = isNearby ? 2.5 : 1.5;
             ctx.beginPath();
-            ctx.arc(hole.x, hole.y, hole.eventHorizon * 1.2, 0, Math.PI * 2);
+            ctx.arc(hole.x, hole.y, photonRadius, 0, Math.PI * 2);
             ctx.stroke();
 
-            // Warning ring when very close
-            if (isNearby) {
-                ctx.strokeStyle = `hsla(${hole.hue}, 90%, 60%, ${pulse * 0.4})`;
-                ctx.lineWidth = 1;
-                ctx.setLineDash([5, 5]);
+            // Second photon ring (dimmer, slightly larger)
+            ctx.strokeStyle = `hsla(${hole.hue + 15}, 80%, 60%, ${photonAlpha * 0.4})`;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.arc(hole.x, hole.y, eh * 1.18, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // --- 4. Event horizon shadow (pure black circle) ---
+            const shadowGrad = ctx.createRadialGradient(
+                hole.x, hole.y, 0,
+                hole.x, hole.y, eh
+            );
+            shadowGrad.addColorStop(0, 'rgba(0, 0, 0, 1)');
+            shadowGrad.addColorStop(0.85, 'rgba(0, 0, 0, 1)');
+            shadowGrad.addColorStop(1, 'rgba(0, 0, 0, 0.9)');
+            ctx.fillStyle = shadowGrad;
+            ctx.beginPath();
+            ctx.arc(hole.x, hole.y, eh, 0, Math.PI * 2);
+            ctx.fill();
+
+            // --- 5. Orbital particles (bits of matter in the accretion disk) ---
+            const particleCount = isNearby ? 40 : 24;
+            for (let i = 0; i < particleCount; i++) {
+                const seed = hole.hue * 100 + i * 137.508; // golden angle distribution
+                const orbitR = diskInnerRadius + (diskOuterRadius - diskInnerRadius) * ((i * 0.618) % 1);
+                const speed = 0.3 + (1.0 / (orbitR / eh)) * 0.5; // faster closer in (Kepler-ish)
+                const angle = seed + t * speed;
+                const px = hole.x + Math.cos(angle) * orbitR;
+                const py = hole.y + Math.sin(angle) * orbitR * diskTilt;
+
+                const particleHue = hole.hue + 20 + Math.sin(seed) * 30;
+                const particleBright = 50 + (1 - (orbitR - diskInnerRadius) / (diskOuterRadius - diskInnerRadius)) * 40;
+                const particleAlpha = 0.3 + pulse * 0.15 + Math.sin(seed * 2.3) * 0.1;
+                const particleSize = 1 + Math.sin(seed * 3.7) * 0.8;
+
+                ctx.fillStyle = `hsla(${particleHue}, 85%, ${particleBright}%, ${particleAlpha})`;
                 ctx.beginPath();
-                ctx.arc(hole.x, hole.y, hole.eventHorizon * 1.5, 0, Math.PI * 2);
-                ctx.stroke();
-                ctx.setLineDash([]);
+                ctx.arc(px, py, particleSize, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // --- 6. Proximity warning glow ---
+            if (isNearby) {
+                const warningGrad = ctx.createRadialGradient(
+                    hole.x, hole.y, eh,
+                    hole.x, hole.y, eh * 2.0
+                );
+                warningGrad.addColorStop(0, `hsla(${hole.hue}, 90%, 60%, ${pulse * 0.15})`);
+                warningGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+                ctx.fillStyle = warningGrad;
+                ctx.beginPath();
+                ctx.arc(hole.x, hole.y, eh * 2.0, 0, Math.PI * 2);
+                ctx.fill();
             }
 
             ctx.restore();
@@ -512,40 +590,18 @@ export class BlackHoleSystem implements System {
         // Calculate influence (0.0 - 1.0, higher when closer)
         const influence = Math.max(0, 1 - dist / hole.influenceRadius);
 
-        // --- 1. SPIRAL ROTATION ---
-        // Closer to center = more rotation
-        const spiralAngle = influence * Math.PI * 2 * 3; // Up to 3 full rotations
+        // No distortion — just position and opacity
+        const rotation = 0;
+        const scaleX = 1;
+        const scaleY = 1;
 
-        // Rotate position around black hole
-        const angle = Math.atan2(dy, dx);
-        const newAngle = angle + spiralAngle;
-        const spiralX = hole.x + Math.cos(newAngle) * dist;
-        const spiralY = hole.y + Math.sin(newAngle) * dist;
-
-        // --- 2. SPAGHETTIFICATION ---
-        let rotation = 0;
-        let scaleX = 1;
-        let scaleY = 1;
-
-        if (influence > 0.5) {
-            // Rotate text to face the black hole center
-            const angleToCenter = Math.atan2(dy, dx);
-            rotation = angleToCenter;
-
-            // Stretch towards center based on influence
-            const stretchFactor = 1 + (influence * 4); // Up to 5x stretch
-            scaleX = stretchFactor;
-            scaleY = 1 / stretchFactor; // Compress perpendicular
-        }
-
-        // --- 3. OPACITY FADE ---
-        // Fade out when very close to event horizon
+        // Opacity: fade out when close to event horizon
         const eventHorizonProximity = Math.max(0, 1 - (dist - hole.eventHorizon) / (hole.influenceRadius * 0.3));
         const opacity = Math.max(0, 1 - eventHorizonProximity * 0.7) * (0.3 + influence * 0.4);
 
         return {
-            x: spiralX,
-            y: spiralY,
+            x,
+            y,
             rotation,
             scaleX,
             scaleY,
