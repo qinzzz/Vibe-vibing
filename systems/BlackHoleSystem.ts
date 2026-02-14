@@ -4,6 +4,12 @@ import { EVENTS } from '../core/events';
 import { GameDirector } from './GameDirector';
 import { DiscoveryEngine } from './DiscoveryEngine';
 
+export interface BlackHoleTheme {
+    name: string;
+    hueRange: [number, number];
+    vocabularyPool: string[];
+}
+
 export interface BlackHole {
     id: string;
     x: number;
@@ -13,7 +19,85 @@ export interface BlackHole {
     influenceRadius: number; // Visual distortion radius
     hue: number; // Color variation
     pulsePhase: number; // For animation
+    theme: BlackHoleTheme;
+    teleportCount: number;
+    lastVisited: number; // 0 = never visited
 }
+
+const BLACK_HOLE_THEMES: BlackHoleTheme[] = [
+    {
+        name: 'memory',
+        hueRange: [30, 50],
+        vocabularyPool: [
+            'recall', 'fragment', 'echo', 'nostalgia', 'imprint', 'trace', 'remnant',
+            'ghost', 'residue', 'memoir', 'forgotten', 'faded', 'sepia', 'album',
+            'snapshot', 'relic', 'heirloom', 'diary', 'inscription', 'palimpsest',
+            'afterimage', 'deja-vu', 'reverie', 'recollection', 'keepsake', 'bygone',
+            'wistful', 'memorial', 'vestige', 'patina', 'amber', 'timepiece',
+            'reminiscence', 'souvenir', 'chronicle'
+        ]
+    },
+    {
+        name: 'nature',
+        hueRange: [120, 160],
+        vocabularyPool: [
+            'root', 'canopy', 'pollen', 'moss', 'current', 'erosion', 'bloom',
+            'thorn', 'spore', 'lichen', 'mycelium', 'tendril', 'watershed', 'estuary',
+            'migration', 'symbiosis', 'dormant', 'germinate', 'photosynthesis', 'sediment',
+            'petrified', 'fossil', 'loam', 'strata', 'tidal', 'monsoon',
+            'permafrost', 'delta', 'aquifer', 'understory', 'rhizome', 'cascade',
+            'meadow', 'pollinate', 'biome'
+        ]
+    },
+    {
+        name: 'technology',
+        hueRange: [190, 220],
+        vocabularyPool: [
+            'circuit', 'protocol', 'binary', 'recursive', 'compile', 'algorithm', 'signal',
+            'bandwidth', 'latency', 'buffer', 'kernel', 'daemon', 'payload', 'checksum',
+            'encrypt', 'decrypt', 'pipeline', 'runtime', 'syntax', 'debug',
+            'firmware', 'voltage', 'transistor', 'bitwise', 'overclock', 'cache',
+            'interrupt', 'register', 'handshake', 'throughput', 'subroutine', 'overflow',
+            'telemetry', 'interface', 'bytecode'
+        ]
+    },
+    {
+        name: 'emotion',
+        hueRange: [310, 340],
+        vocabularyPool: [
+            'yearning', 'grief', 'euphoria', 'dread', 'tenderness', 'longing', 'solace',
+            'anguish', 'rapture', 'melancholy', 'serenity', 'fervor', 'remorse', 'elation',
+            'desolation', 'compassion', 'restless', 'bittersweet', 'vulnerability', 'catharsis',
+            'intimacy', 'abandon', 'torment', 'bliss', 'hollow', 'warmth',
+            'trembling', 'wistfulness', 'devotion', 'sorrow', 'exhilaration', 'resignation',
+            'comfort', 'unease', 'adoration'
+        ]
+    },
+    {
+        name: 'violence',
+        hueRange: [0, 15],
+        vocabularyPool: [
+            'shatter', 'fracture', 'rupture', 'collision', 'entropy', 'decay', 'scar',
+            'wreckage', 'impact', 'debris', 'tremor', 'eruption', 'detonation', 'rift',
+            'corrosion', 'erosion', 'splinter', 'severance', 'puncture', 'abrasion',
+            'aftermath', 'demolition', 'fissure', 'friction', 'turbulence', 'combustion',
+            'concussion', 'avalanche', 'upheaval', 'implosion', 'disintegration', 'scorch',
+            'obliterate', 'breach', 'ruin'
+        ]
+    },
+    {
+        name: 'cosmic',
+        hueRange: [260, 300],
+        vocabularyPool: [
+            'void', 'abyss', 'singularity', 'eternity', 'cosmic', 'infinite',
+            'gravitation', 'warped', 'event', 'horizon', 'spacetime', 'collapse',
+            'quantum', 'entangled', 'nebula', 'stellar', 'dark', 'matter',
+            'antimatter', 'photon', 'quasar', 'pulsar', 'neutron', 'gravity',
+            'curvature', 'relativity', 'dimensional', 'wormhole', 'portal',
+            'fabric', 'continuum', 'distortion', 'paradox', 'entropy', 'chaos'
+        ]
+    }
+];
 
 export interface AmbientWord {
     id: string;
@@ -34,11 +118,14 @@ export class BlackHoleSystem implements System {
     private ambientWords: AmbientWord[] = [];
     private nextBlackHoleId = 0;
     private nextWordId = 0;
+    private readonly sessionId = Math.random().toString(36).slice(2, 8);
+    private cachedStoryKeywords: string[] = [];
+    private storyKeywordsFetched = false;
 
     // Configuration
-    private readonly INITIAL_BLACK_HOLES = 4;
-    private readonly MIN_HOLE_DISTANCE = 1200; // Minimum distance between black holes
-    private readonly GENERATION_DISTANCE = 2000; // Generate new holes when worm explores beyond this
+    private readonly INITIAL_BLACK_HOLES = 2;
+    private readonly MIN_HOLE_DISTANCE = 2400; // Minimum distance between black holes
+    private readonly GENERATION_DISTANCE = 3500; // Generate new holes when worm explores beyond this
     private readonly AMBIENT_WORDS_PER_HOLE = 40;
     private readonly TELEPORT_COOLDOWN = 2000; // ms
     private readonly TELEPORT_FLASH_DURATION = 300; // ms
@@ -46,6 +133,10 @@ export class BlackHoleSystem implements System {
     private lastTeleportTime = 0;
     private teleportFlashOpacity = 0;
     private nearestHoleId: string | null = null; // For proximity warning
+    // 3-phase teleport transition
+    private teleportPhase: 'idle' | 'fadeOut' | 'themed' | 'fadeIn' = 'idle';
+    private teleportPhaseTimer = 0;
+    private teleportExitHue = 260;
     private wordVocabulary = [
         'void', 'abyss', 'singularity', 'eternity', 'cosmic', 'infinite',
         'gravitation', 'warped', 'event', 'horizon', 'spacetime', 'collapse',
@@ -58,6 +149,9 @@ export class BlackHoleSystem implements System {
     init(engine: Engine) {
         this.engine = engine;
 
+        // Fetch story keywords for seeding into black hole ambient words
+        this.fetchStoryKeywords();
+
         // Generate initial black hole network
         this.generateInitialBlackHoles();
 
@@ -66,6 +160,33 @@ export class BlackHoleSystem implements System {
 
         // Listen for clicks to eat ambient words
         this.engine.events.on('INPUT_START', this.handleEatAttempt);
+    }
+
+    private async fetchStoryKeywords() {
+        if (this.storyKeywordsFetched) return;
+        try {
+            const wormId = this.engine.wormState?.activeWormId;
+            if (!wormId) return;
+            const res = await fetch(`/api/story/${wormId}`);
+            const data = await res.json();
+            if (data.hasStory && data.segments) {
+                const unrevealed: string[] = [];
+                for (const seg of data.segments) {
+                    if (!seg.revealed && seg.keywordProgress) {
+                        for (const kp of seg.keywordProgress) {
+                            if (!kp.inVocab) {
+                                unrevealed.push(kp.fullKeyword);
+                            }
+                        }
+                    }
+                }
+                this.cachedStoryKeywords = unrevealed;
+                console.log(`[BlackHole] Cached ${unrevealed.length} unrevealed story keywords`);
+            }
+        } catch (err) {
+            console.warn('[BlackHole] Failed to fetch story keywords:', err);
+        }
+        this.storyKeywordsFetched = true;
     }
 
     update(dt: number) {
@@ -110,10 +231,19 @@ export class BlackHoleSystem implements System {
         // Check for worm-black hole collisions (teleportation)
         this.checkTeleportation(now);
 
-        // Update teleport flash effect
-        if (this.teleportFlashOpacity > 0) {
-            this.teleportFlashOpacity -= dtSec * 3; // Fade out quickly
-            this.teleportFlashOpacity = Math.max(0, this.teleportFlashOpacity);
+        // Update 3-phase teleport transition
+        if (this.teleportPhase !== 'idle') {
+            this.teleportPhaseTimer += dt;
+            if (this.teleportPhase === 'fadeOut' && this.teleportPhaseTimer >= 400) {
+                this.teleportPhase = 'themed';
+                this.teleportPhaseTimer = 0;
+            } else if (this.teleportPhase === 'themed' && this.teleportPhaseTimer >= 400) {
+                this.teleportPhase = 'fadeIn';
+                this.teleportPhaseTimer = 0;
+            } else if (this.teleportPhase === 'fadeIn' && this.teleportPhaseTimer >= 700) {
+                this.teleportPhase = 'idle';
+                this.teleportPhaseTimer = 0;
+            }
         }
 
         // Check if we need to generate new black holes
@@ -129,8 +259,8 @@ export class BlackHoleSystem implements System {
         // Draw ambient words with gravitational distortion
         this.drawAmbientWords(ctx);
 
-        // Draw teleport flash effect
-        if (this.teleportFlashOpacity > 0) {
+        // Draw teleport transition effect
+        if (this.teleportPhase !== 'idle') {
             this.drawTeleportFlash(ctx);
         }
     }
@@ -169,6 +299,8 @@ export class BlackHoleSystem implements System {
 
     private createBlackHole(x: number, y: number) {
         const radius = 80 + Math.random() * 40; // 80-120px event horizon
+        const theme = BLACK_HOLE_THEMES[Math.floor(Math.random() * BLACK_HOLE_THEMES.length)];
+        const hue = theme.hueRange[0] + Math.random() * (theme.hueRange[1] - theme.hueRange[0]);
         const hole: BlackHole = {
             id: `blackhole-${this.nextBlackHoleId++}`,
             x,
@@ -176,8 +308,11 @@ export class BlackHoleSystem implements System {
             radius,
             eventHorizon: radius,
             influenceRadius: radius * 5, // 5x for gravitational effects
-            hue: 260 + Math.random() * 40, // Purple-ish
-            pulsePhase: Math.random() * Math.PI * 2
+            hue,
+            pulsePhase: Math.random() * Math.PI * 2,
+            theme,
+            teleportCount: 0,
+            lastVisited: 0
         };
 
         this.blackHoles.push(hole);
@@ -185,12 +320,20 @@ export class BlackHoleSystem implements System {
         // Generate ambient words around this black hole
         this.generateAmbientWords(hole);
 
-        console.log(`[BlackHole] Created at (${x.toFixed(0)}, ${y.toFixed(0)})`);
+        console.log(`[BlackHole] Created ${theme.name} hole at (${x.toFixed(0)}, ${y.toFixed(0)}) hue=${hue.toFixed(0)}`);
     }
 
     private generateAmbientWords(hole: BlackHole) {
+        // Build word pool: themed vocabulary + 2-3 story keywords mixed in
+        const pool = [...hole.theme.vocabularyPool];
+        if (this.cachedStoryKeywords.length > 0) {
+            const shuffledKeywords = [...this.cachedStoryKeywords].sort(() => Math.random() - 0.5);
+            const keywordsToInject = shuffledKeywords.slice(0, 2 + Math.floor(Math.random() * 2)); // 2-3
+            pool.push(...keywordsToInject);
+        }
+
         for (let i = 0; i < this.AMBIENT_WORDS_PER_HOLE; i++) {
-            const word = this.randomWord();
+            const word = pool[Math.floor(Math.random() * pool.length)];
             const orbitRadius = hole.influenceRadius * (0.4 + Math.random() * 0.5);
             const orbitAngle = Math.random() * Math.PI * 2;
             const orbitSpeed = 0.1 + Math.random() * 0.2; // radians per second
@@ -199,7 +342,7 @@ export class BlackHoleSystem implements System {
             const isEdible = true;
 
             this.ambientWords.push({
-                id: `ambient-${this.nextWordId++}`,
+                id: `ambient-${this.sessionId}-${this.nextWordId++}`,
                 text: word,
                 x: hole.x + Math.cos(orbitAngle) * orbitRadius,
                 y: hole.y + Math.sin(orbitAngle) * orbitRadius,
@@ -255,7 +398,7 @@ export class BlackHoleSystem implements System {
         }
 
         // Generate new black hole ahead if needed
-        if (!hasHoleAhead && Math.random() < 0.3) {
+        if (!hasHoleAhead && Math.random() < 0.12) {
             const distance = explorationRadius * 0.8;
             const angleOffset = (Math.random() - 0.5) * (Math.PI / 2);
             const x = worm.corePos.x + Math.cos(wormAngle + angleOffset) * distance;
@@ -357,18 +500,31 @@ export class BlackHoleSystem implements System {
             leg.isStepping = false;
         }
 
-        // Trigger visual effects
-        this.teleportFlashOpacity = 1.0;
+        // Sanity cost/reward
+        worm.sanity = Math.max(0, worm.sanity - 15); // teleport cost
+        if (exitHole.lastVisited === 0) {
+            // Discovery bonus for first visit
+            worm.sanity = Math.min(100, worm.sanity + 20);
+            this.engine.events.emit(EVENTS.JOURNAL_ENTRY, `Drifted into a ${exitHole.theme.name} dimension. The air tastes different here.`);
+        }
+        exitHole.lastVisited = performance.now();
+        exitHole.teleportCount++;
+
+        // Start 3-phase visual transition
+        this.teleportPhase = 'fadeOut';
+        this.teleportPhaseTimer = 0;
+        this.teleportExitHue = exitHole.hue;
         this.lastTeleportTime = now;
 
-        // Emit event
+        // Emit event with theme info
         this.engine.events.emit(EVENTS.WORMHOLE_TELEPORT, {
             entryHoleId,
             exitHoleId: exitHole.id,
-            wormId: worm.id
+            wormId: worm.id,
+            exitTheme: exitHole.theme
         });
 
-        console.log(`[BlackHole] Worm teleported from ${entryHoleId} to ${exitHole.id}`);
+        console.log(`[BlackHole] Worm teleported from ${entryHoleId} to ${exitHole.id} (${exitHole.theme.name})`);
     }
 
     // ==================== Drawing ====================
@@ -610,14 +766,58 @@ export class BlackHoleSystem implements System {
     }
 
     private drawTeleportFlash(ctx: CanvasRenderingContext2D) {
+        const cx = this.engine.cameraPos.x;
+        const cy = this.engine.cameraPos.y;
+        const w = this.engine.width;
+        const h = this.engine.height;
+        const left = cx - w;
+        const top = cy - h;
+        const fullW = w * 2;
+        const fullH = h * 2;
+
         ctx.save();
-        ctx.fillStyle = `rgba(147, 51, 234, ${this.teleportFlashOpacity * 0.3})`; // Purple flash
-        ctx.fillRect(
-            this.engine.cameraPos.x - this.engine.width,
-            this.engine.cameraPos.y - this.engine.height,
-            this.engine.width * 2,
-            this.engine.height * 2
-        );
+
+        if (this.teleportPhase === 'fadeOut') {
+            // Phase 1: Fade to black (0-400ms)
+            const t = Math.min(this.teleportPhaseTimer / 400, 1);
+            const opacity = t * t; // ease-in
+            ctx.fillStyle = `rgba(0, 0, 0, ${opacity})`;
+            ctx.fillRect(left, top, fullW, fullH);
+        } else if (this.teleportPhase === 'themed') {
+            // Phase 2: Black with theme color bleeding from edges
+            const t = Math.min(this.teleportPhaseTimer / 400, 1);
+            // Full black background
+            ctx.fillStyle = 'rgba(0, 0, 0, 1)';
+            ctx.fillRect(left, top, fullW, fullH);
+            // Radial gradient of theme color from edges inward
+            const hue = this.teleportExitHue;
+            const glowAlpha = 0.3 + t * 0.4;
+            const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(w, h));
+            grad.addColorStop(0, `hsla(${hue}, 80%, 30%, 0)`);
+            grad.addColorStop(0.5, `hsla(${hue}, 70%, 20%, ${glowAlpha * 0.3})`);
+            grad.addColorStop(0.8, `hsla(${hue}, 90%, 40%, ${glowAlpha * 0.6})`);
+            grad.addColorStop(1, `hsla(${hue}, 100%, 50%, ${glowAlpha})`);
+            ctx.fillStyle = grad;
+            ctx.fillRect(left, top, fullW, fullH);
+        } else if (this.teleportPhase === 'fadeIn') {
+            // Phase 3: Fade from black to clear, theme glow lingers
+            const t = Math.min(this.teleportPhaseTimer / 700, 1);
+            const opacity = 1 - t * t; // ease-out
+            ctx.fillStyle = `rgba(0, 0, 0, ${opacity})`;
+            ctx.fillRect(left, top, fullW, fullH);
+            // Lingering theme glow
+            const hue = this.teleportExitHue;
+            const glowAlpha = (1 - t) * 0.3;
+            if (glowAlpha > 0.01) {
+                const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(w, h));
+                grad.addColorStop(0, `hsla(${hue}, 80%, 30%, 0)`);
+                grad.addColorStop(0.7, `hsla(${hue}, 70%, 25%, ${glowAlpha * 0.4})`);
+                grad.addColorStop(1, `hsla(${hue}, 90%, 40%, ${glowAlpha})`);
+                ctx.fillStyle = grad;
+                ctx.fillRect(left, top, fullW, fullH);
+            }
+        }
+
         ctx.restore();
     }
 

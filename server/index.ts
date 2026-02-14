@@ -1731,7 +1731,7 @@ app.get('/api/world-text', (req, res) => {
 
 // 5. Generate New Paragraphs (AI) — themed to story if worm has one
 app.post('/api/generate-paragraphs', async (req, res) => {
-    const { count = 3, wormId } = req.body;
+    const { count = 3, wormId, themeOverride } = req.body;
 
     // If worm has a story, include setting + unrevealed keywords in the prompt
     let settingContext = '';
@@ -1765,10 +1765,17 @@ app.post('/api/generate-paragraphs', async (req, res) => {
     }
 
     try {
-        console.log(`[GENERATE] Generating ${count} new paragraphs...${settingContext ? ' (story-themed)' : ''}`);
+        // Build atmospheric mood prefix if a dimension theme was specified
+        let themePrefix = '';
+        if (themeOverride) {
+            themePrefix = `ATMOSPHERIC MOOD: Write as if the world has shifted into a ${themeOverride} dimension. Tone, sensory details, and imagery should reflect this atmosphere.\n`;
+            console.log(`[GENERATE] Applying theme override: ${themeOverride}`);
+        }
+
+        console.log(`[GENERATE] Generating ${count} new paragraphs...${settingContext ? ' (story-themed)' : ''}${themeOverride ? ` (${themeOverride} dimension)` : ''}`);
         const prompt = settingContext
-            ? `Generate ${count} short journal-like entries written as fragmented personal memories from someone in this world:${settingContext}${keywordInstruction}These should read like torn diary pages or personal notes — grounded, specific, with concrete sensory details. Not poetic or literary. Format as JSON array: ["sentence1", "sentence2", "sentence3"]`
-            : `Generate ${count} short journal-like entries written as fragmented personal memories. These should read like torn diary pages — grounded observations about daily life, with concrete sensory details. Not poetic or literary. Format as JSON array: ["sentence1", "sentence2", "sentence3"]`;
+            ? `${themePrefix}Generate ${count} short journal-like entries written as fragmented personal memories from someone in this world:${settingContext}${keywordInstruction}These should read like torn diary pages or personal notes — grounded, specific, with concrete sensory details. Not poetic or literary. Format as JSON array: ["sentence1", "sentence2", "sentence3"]`
+            : `${themePrefix}Generate ${count} short journal-like entries written as fragmented personal memories. These should read like torn diary pages — grounded observations about daily life, with concrete sensory details. Not poetic or literary. Format as JSON array: ["sentence1", "sentence2", "sentence3"]`;
 
         const text = await generateText(prompt, 'paragraphs', 0, 'advanced');
         console.log('[GENERATE] AI response:', text);

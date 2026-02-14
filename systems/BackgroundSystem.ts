@@ -194,6 +194,22 @@ export class BackgroundSystem implements System {
             this.regenerationCooldownTimer = 0;
             this.startupRegenerationDelay = this.STARTUP_REGEN_GUARD;
         });
+
+        // World shift on wormhole teleport: age existing blocks and regenerate with theme
+        this.engine.events.on(EVENTS.WORMHOLE_TELEPORT, (data: { exitTheme?: { name: string } }) => {
+            console.log(`[BACKGROUND] Wormhole teleport detected, shifting world to "${data.exitTheme?.name || 'unknown'}" dimension`);
+            // Age all existing blocks to 35+ so they fade out rapidly
+            for (const block of this.blocks) {
+                if ((block.age ?? 0) < 35) {
+                    block.age = 35;
+                }
+            }
+            // After 1s delay, regenerate with themed content
+            const themeName = data.exitTheme?.name;
+            setTimeout(() => {
+                this.regenerateWordsWithTheme(themeName);
+            }, 1000);
+        });
     }
 
     private handleWordReleased = (data: { text: string; pos: { x: number; y: number } }) => {
@@ -1750,6 +1766,54 @@ export class BackgroundSystem implements System {
             }
         } catch (err) {
             console.error('[BACKGROUND] Failed to regenerate words:', err);
+        } finally {
+            this.isRegenerating = false;
+        }
+    }
+
+    private async regenerateWordsWithTheme(themeOverride?: string) {
+        if (this.isRegenerating) return;
+        this.isRegenerating = true;
+
+        try {
+            this.blocks = this.blocks.filter(block => block.tokens.some(token => token.state === 'present'));
+
+            const wormId = this.engine.wormState?.activeWormId;
+            const response = await fetch('/api/generate-paragraphs', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ count: 3, wormId, themeOverride })
+            });
+
+            const data = await response.json();
+            const paragraphs = data.paragraphs || [];
+            console.log(`[BACKGROUND] Generated ${paragraphs.length} themed paragraphs (${themeOverride || 'default'})`);
+
+            const attempts = 50;
+            const ctx = this.engine.ctx;
+
+            for (let i = 0; i < paragraphs.length; i++) {
+                const text = paragraphs[i];
+                setTimeout(() => {
+                    let placed = false;
+                    for (let j = 0; j < attempts; j++) {
+                        const spawn = this.getSpawnPosition();
+                        const testBlock = tokenizeAndLayout(text, spawn.x, spawn.y, ctx);
+                        if (this.canPlaceBlock(testBlock, 50, true)) {
+                            testBlock.age = 0;
+                            testBlock.opacity = 0;
+                            this.blocks.push(testBlock);
+                            placed = true;
+                            break;
+                        }
+                    }
+                    if (!placed) {
+                        console.log('[BACKGROUND] Could not place themed paragraph (no space)');
+                    }
+                }, i * 500);
+            }
+        } catch (err) {
+            console.error('[BACKGROUND] Failed to regenerate themed words:', err);
         } finally {
             this.isRegenerating = false;
         }
