@@ -200,6 +200,19 @@ Words are no longer just fuel for stats — their *content* now matters. A hidde
 *   **Persistence**: Story outlines and revealed fragments persist across sessions via two new database tables (`story_outlines`, `story_fragments`). Resetting the game clears the story and generates a fresh one.
 *   **Graceful Fallback**: When no API key is configured or the story is complete, thoughts fall through to the existing vocab-based generation system.
 
+**Black Hole Dimensional Drift**
+
+Transformed black holes from simple teleporters into themed "pocket dimensions" that shift the world's atmosphere and help story progression.
+
+*   **6 Themed Dimensions**: Each black hole has a unique theme (memory/amber, nature/teal, technology/cyan, emotion/pink, violence/red, cosmic/purple) with its own vocabulary pool and color palette.
+*   **Story Integration**: Orbiting words around black holes now include 2-3 hidden story keywords mixed with themed vocabulary, creating "breadcrumb trails" for narrative discovery.
+*   **World Shift on Teleport**: When entering a black hole, the world transforms:
+    *   Existing text rapidly fades out
+    *   Screen transitions through a 3-phase cinematic effect (fade to black → theme color glow → fade in)
+    *   New AI-generated paragraphs spawn with atmospheric mood matching the exit dimension
+*   **Sanity System**: Teleporting costs 15 sanity, but discovering a new black hole for the first time grants +20 sanity bonus and a journal entry.
+*   **Why**: Makes black holes feel like meaningful landmarks with distinct personalities rather than random fast-travel points, while weaving them into the story system.
+
 ## Proposal for next step - New Level Design
 *(My laptop was catching fire and reached the cap of my genimi plan...so just leaving some ideas here)*
 *   **Level 1: The Origin (The Birth of Meaning)**
